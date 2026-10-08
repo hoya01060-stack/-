@@ -1,0 +1,111 @@
+# 이 파일을 config.yaml 로 복사해서 수정하세요.  (cp config.example.yaml config.yaml)
+# 모든 % 값은 "퍼센트 숫자"입니다. 예) 20 = 20%
+
+markets: [KR, US]
+
+# 동일비중 매수 금액 계산용 (기법 4: 미하일 포페)
+capital:
+  KR: 10000000      # 원
+  US: 10000         # 달러
+max_positions: 10   # 총자산 / max_positions = 1종목 매수금액
+
+universe:
+  KR:
+    markets: [KOSPI, KOSDAQ]
+    min_price: 1000            # 원
+    min_avg_value: 1000000000  # 20일 평균 거래대금 10억원 이상
+    exclude_preferred: true    # 우선주 제외
+    exclude_spac: true         # 스팩 제외
+  US:
+    source: SP500              # SP500 (기본) | NASDAQ | NYSE  (NASDAQ/NYSE는 종목 수가 많아 느림)
+    extra_tickers: []          # 추가로 감시할 티커 예) [PLTR, SOFI]
+    min_price: 5
+    min_avg_value: 20000000    # 20일 평균 거래대금 2천만 달러 이상
+
+strategies:
+  # 1-1 거래량 급감 (빈로드 코슬라)
+  volume_dryup:
+    enabled: true
+    drawdown_pct: 20       # 고점 대비 하락률
+    high_lookback: 120     # 고점 산정 기간(거래일)
+    decline_days: 5        # 거래량 연속 감소 일수
+  # 1-2 가격 방어 (제이 아우타니)
+  price_defense:
+    enabled: true
+    window: 20             # 관찰 기간
+    band_pct: 2            # 지지선 +2% 이내 저가 = 지지선 테스트
+    min_tests: 3           # 최소 테스트 횟수
+    min_hold_days: 10      # 지지선이 버틴 최소 기간
+    max_above_pct: 8       # 현재가가 지지선 +8% 이내일 때만 (매수 가능 구간)
+    vol_mult: 1.3          # 테스트일 거래량 >= 60일 평균 x1.3 (매도 물량 출회)
+    recent_test_days: 5    # 최근 5일 안에 다시 테스트
+  # 1-3 거래량 폭증 + 주가 횡보 (데이비드 시겔)
+  volume_surge_sideways:
+    enabled: true
+    window: 20             # 최근 한 달(20거래일)
+    base: 60               # 비교 기준: 그 이전 60거래일 평균
+    vol_mult: 3            # 거래량 3배 이상
+    max_move_pct: 3        # 한 달 주가 변동 3% 미만
+  # 2-1 폭락장의 버팀목 (올리버 켈)
+  leaders:
+    enabled: true
+    crash_drawdown_pct: 8  # 지수가 60일 고점 대비 8% 이상 하락 = 폭락장 모드
+    lookback: 60
+    down_day_pct: -1.0     # 지수 하락일 기준 (-1% 이하)
+    min_down_days: 3
+    top_n: 20
+  # 2-2 10일 이동평균선 매매 (올리버 켈)
+  ma10:
+    enabled: true
+    period: 10
+  # 2-3 돌파 매매 + 불타기 (데이비드 헨)
+  breakout:
+    enabled: true
+    surge_pct: 20          # 직전 급등 폭
+    surge_window: 10       # 급등 측정 기간(거래일)
+    min_rest: 2            # 횡보 2~3일
+    max_rest: 3
+    max_pullback_pct: 8    # 횡보 중 고점 대비 최대 눌림
+    pyramid_levels_pct: [5, 10]   # 매수가 대비 +5%, +10% 에서 불타기 알림
+  # 3 사이클 주식 바닥 (마취과 의사) - 주 1회 재무데이터 갱신
+  cycle:
+    enabled: true
+    max_psr: 0.5           # 시가총액 / 연매출
+    loss_years: 2          # 적자 연속 연수 (2 = 적자 2년차)
+    strict_second_year: true   # true: 정확히 2년차(3년 전은 흑자)만
+    loss_metric: operating     # operating(영업이익) | net(순이익)
+    min_peer_loss_ratio: 0.5   # 같은 업종 경쟁사 중 적자 비율 50% 이상
+    min_peers: 3
+    target_eps_multiple: 5     # 목표가 = 과거 최고 EPS x 5
+    history_years: 8
+
+risk:
+  stop_loss_pct: 5       # 기법 4: -5% 손절
+  take_profit_pct: 15    # 기법 4: +15% 익절
+  default_exit_mode: fixed   # fixed(-5/+15) | trend(10일선 이탈 시 매도 + 불타기)
+
+regime:
+  # 기법 4-2: 하락장 자산 방어 (레이 달리오)
+  crash_drawdown_pct: 15   # 지수 52주 고점 대비 -15% → 위험회피
+  suppress_buys_in_risk_off: false   # true면 위험회피 국면에서 매수 알림 중단
+  safe_assets:
+    KR: {"132030": "KODEX 골드선물(H)", "261240": "KODEX 미국달러선물"}
+    US: {"GLD": "SPDR Gold", "UUP": "Invesco DB US Dollar Bullish"}
+
+intraday:
+  interval_min: 5
+  provider: auto          # auto(KIS 키 있으면 KIS, 없으면 yfinance) | kis | yfinance
+  max_watch: 150          # 시장별 장중 감시 최대 종목 수 (API 호출 제한 고려)
+  kis_requests_per_sec: 8
+
+schedule:
+  KR: {scan_time: "16:10", intraday_start: "09:05", intraday_end: "15:20"}
+  US: {scan_time: "16:30", intraday_start: "09:35", intraday_end: "15:55"}
+  fundamentals: {day_of_week: sat, time: "10:00"}   # 한국시간
+
+briefing:
+  use_llm: true           # ANTHROPIC_API_KEY 가 있을 때만 동작
+  model: claude-opus-5-5
+
+data_dir: data
+history_days: 400         # 일봉 보관 기간
