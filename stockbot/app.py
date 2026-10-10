@@ -117,20 +117,26 @@ class App:
     def _buy(self, args) -> str:
         modes = ("fixed", "trend", "turtle", "cycle")
         if len(args) < 2:
-            return "사용법: /buy 종목코드 매수가 [수량] [fixed|trend|turtle|cycle]"
+            return "사용법: /buy 종목코드 매수가 [수량] [fixed|trend|turtle|cycle] [stop=손절가]"
         t, price = args[0].upper(), float(args[1].replace(",", ""))
         m = market_of(t)
         mode = next((a for a in args[2:] if a in modes), self.cfg["risk"]["default_exit_mode"])
         nums = [a for a in args[2:] if a.replace(".", "").replace(",", "").isdigit()]
+        explicit = next((float(a.split("=", 1)[1].replace(",", "")) for a in args[2:]
+                         if a.lower().startswith(("stop=", "손절="))), None)
+        if explicit is not None and explicit >= price:
+            return "손절가는 매수가보다 낮아야 합니다."
         w = self.store.watch(m).get(t, {})
         name = w.get("name") or t
-        plan = S.plan_for(self.cfg, m, price, mode, w.get("low10"))
+        plan = S.plan_for(self.cfg, m, price, mode, w.get("low10"), stop_price=explicit)
         qty = float(nums[0].replace(",", "")) if nums else plan.qty
         if qty <= 0:
             return "수량이 0입니다. /buy 종목 매수가 수량 으로 직접 입력하세요."
         capital, risk = self.cfg["capital"][m], self.cfg["risk"].get("account_risk_pct", 2)
         hard = S.account_stop(price, qty, capital, risk)             # 계좌 2% 손실 가격
         method_stop = price * (1 - self.cfg["risk"]["stop_loss_pct"] / 100) if mode in ("fixed", "trend") else 0
+        if explicit is not None:
+            method_stop = explicit
         stop = max(method_stop, hard)
         take = {"fixed": plan.take, "cycle": w.get("target")}.get(mode)
         self.store.open_position(m, t, name, price, qty, mode, stop if stop > 0 else None, take)
@@ -196,6 +202,7 @@ HELP = """<b>📈 주식 알림 봇 명령어</b>
    trend: -5% 손절 + 10일선 이탈 매도 + 불타기 알림
    turtle: 10일 최저가 이탈 시 전량 매도 (20일 신고가 돌파 매수용)
    cycle: 사이클주 목표가(최고 EPS x5) 도달 알림
+   stop=가격: 손절가 직접 지정 (예: 급등 후 절반 지지선)
    ※ 모든 모드: 계좌의 2%를 잃는 가격에 도달하면 무조건 손절 알림
    예) /buy 005930 72000 10   ·   /buy NVDA 120.5 5 trend
 /sell 종목 [매도가] — 보유 종료

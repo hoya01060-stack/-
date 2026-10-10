@@ -158,6 +158,57 @@ def low_breakdown(df: pd.DataFrame, exit_period=10, **_) -> pd.Series:
     return (df["Close"] < donchian_low(df, exit_period)).fillna(False)
 
 
+def surge_hold(df: pd.DataFrame, surge_pct=20, surge_vol_mult=2.0, hold_days=3, hold_ratio=0.5,
+               basis="low", require_pullback=True, rest_vol_mult=1.0, vol_base=20, **_) -> pd.DataFrame:
+    """2-5 급등 후 절반 지지 매수.
+
+    급등일(D): 전일 대비 +surge_pct% 이상 & 거래량 >= 직전 vol_base일 평균 x surge_vol_mult (주도주)
+    지지선: 급등 전일 종가 + 급등폭 x hold_ratio (= 상승분의 절반)
+    D+1 ~ D+hold_days 동안
+      - 저가(basis=low) 또는 종가(basis=close)가 한 번도 지지선 아래로 안 내려감 (굳건히 지지)
+      - require_pullback: 한 번이라도 급등일 종가 아래로 밀림 (= 차익 실현 물량이 실제로 나옴)
+      - 평균 거래량 >= 급등 전 평균 x rest_vol_mult (매물이 나오는데도 버팀)
+    → D+hold_days 종가에 signal=True. support=지지선.
+    """
+    c, l, v = df["Close"], df["Low"], df["Volume"]
+    k = hold_days
+    prev = c.shift(1)
+    base_vol = v.shift(1).rolling(vol_base).mean()
+    surge = ((c / prev - 1) >= surge_pct / 100) & (v >= surge_vol_mult * base_vol)
+    s_close, s_prev = c.shift(k), prev.shift(k)
+    support = s_prev + (s_close - s_prev) * hold_ratio
+    floor = (l if basis == "low" else c).rolling(k).min()
+    ok = surge.shift(k, fill_value=False) & (floor >= support)
+    if require_pullback:
+        ok &= l.rolling(k).min() < s_close
+    if rest_vol_mult:
+        ok &= v.rolling(k).mean() >= rest_vol_mult * base_vol.shift(k)
+    return pd.DataFrame({"signal": ok.fillna(False).astype(bool), "support": support.where(ok)})
+
+
+def surge_hold_progress(df: pd.DataFrame, surge_pct=20, surge_vol_mult=2.0, hold_days=3, hold_ratio=0.5,
+                        basis="low", vol_base=20, **_) -> dict | None:
+    """진행 중인 급등 종목: 급등 후 0~hold_days-1일째이고 아직 지지선을 지키는 중이면 정보 반환."""
+    c, l, v = df["Close"], df["Low"], df["Volume"]
+    n = len(df)
+    for d in range(0, hold_days):          # d = 급등일로부터 지난 거래일 수 (0 = 오늘 급등)
+        i = n - 1 - d
+        if i < vol_base + 1:
+            break
+        prev = c.iloc[i - 1]
+        base = v.iloc[i - vol_base:i].mean()
+        if c.iloc[i] / prev - 1 >= surge_pct / 100 and v.iloc[i] >= surge_vol_mult * base:
+            support = prev + (c.iloc[i] - prev) * hold_ratio
+            after = (l if basis == "low" else c).iloc[i + 1:]
+            if after.empty or after.min() >= support:
+                lows = l.iloc[i + 1:]
+                return {"support": float(support), "day": d, "surge_close": float(c.iloc[i]),
+                        "surge_pct": float((c.iloc[i] / prev - 1) * 100),
+                        "min_low": float(lows.min()) if len(lows) else None}
+            return None
+    return None
+
+
 @dataclass
 class Resilience:
     excess_on_down_days: float   # 지수 하락일 평균 초과수익(%p)
@@ -291,13 +342,16 @@ def position_plan(price: float, capital: float, max_positions: int, stop_loss_pc
     return PositionPlan(price, qty, qty * price, stop, take, risk)
 
 
-def plan_for(cfg, market: str, price: float, mode: str = "fixed", exit_low: float | None = None) -> PositionPlan:
-    """설정값으로 매수 계획 산출. mode=turtle 이면 손절=10일 최저가, 익절 없음."""
+def plan_for(cfg, market: str, price: float, mode: str = "fixed", exit_low: float | None = None,
+             stop_price: float | None = None) -> PositionPlan:
+    """설정값으로 매수 계획 산출. mode=turtle 이면 손절=10일 최저가, 익절 없음.
+    stop_price 를 주면(예: 급등 후 절반 지지선) 그 가격을 기법 손절가로 사용."""
     r = cfg["risk"]
-    turtle = mode == "turtle" and exit_low is not None and exit_low < price
+    if stop_price is None or stop_price >= price:
+        stop_price = exit_low if mode == "turtle" and exit_low is not None and exit_low < price else None
     return position_plan(price, cfg["capital"][market], cfg["max_positions"], r["stop_loss_pct"],
                          None if mode in ("turtle", "trend", "cycle") else r["take_profit_pct"],
-                         stop_price=exit_low if turtle else None,
+                         stop_price=stop_price,
                          account_risk_pct=r.get("account_risk_pct", 2))
 
 

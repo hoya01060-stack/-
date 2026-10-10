@@ -74,6 +74,17 @@ strategies:
     exit_period: 10        # 최근 10일 최저가를 깨면 전량 매도
     near_pct: 3            # 20일 최고가 3% 이내 종목을 장중 감시
     near_watch_max: 60     # 그중 최대 감시 종목 수
+  # 2-5 하루 +20% 급등 주도주 → 3일간 차익매물에도 상승분 절반 지지 → 매수
+  surge_hold:
+    enabled: true
+    surge_pct: 20          # 하루 상승률
+    surge_vol_mult: 2.0    # 급등일 거래량 >= 직전 20일 평균 x2 (주도주 조건)
+    hold_days: 3           # 지지 확인 기간
+    hold_ratio: 0.5        # 상승분의 절반 (급등 전일 종가 + 상승폭 x 0.5)
+    basis: low             # low: 장중 저가도 지지선 위 (엄격) | close: 종가만 지지선 위
+    require_pullback: true # 3일 중 급등일 종가 아래로 밀린 적 있어야 함 (= 차익 매물 출회)
+    rest_vol_mult: 1.0     # 3일 평균 거래량 >= 급등 전 평균 x1 (매물이 실제로 나옴)
+    alert_before_close_min: 30   # 3일째 장 마감 30분 전부터 지지 유지 중이면 '종가 매수' 알림
   # 3 사이클 주식 바닥 (마취과 의사) - 주 1회 재무데이터 갱신
   cycle:
     enabled: true

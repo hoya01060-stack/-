@@ -163,3 +163,34 @@ def test_backtest_turtle_exit():
     sig.iloc[30] = True                             # 105 돌파 다음 날 시가 110 매수
     tr = B.simulate("X", df, sig, "turtle", cost_pct=0)
     assert tr[0].reason == "10일 최저가 이탈" and tr[0].exit == pytest.approx(99)
+
+
+def _surge(after_closes, surge_vol=3e6, rest_vol=1.5e6):
+    close = [100] * 30 + [125] + list(after_closes)
+    vol = [1e6] * 30 + [surge_vol] + [rest_vol] * len(after_closes)
+    return make(close, vol)
+
+
+def test_surge_hold_signal():
+    df = _surge([120, 116, 119])                       # 지지선 112.5, 저가 최저 114.84 → 지지 + 차익매물
+    res = S.surge_hold(df)
+    assert res["signal"].iloc[-1] and res["support"].iloc[-1] == pytest.approx(112.5)
+    assert not res["signal"].iloc[-2]                  # 2일째는 아직 아님
+    assert not S.surge_hold(_surge([120, 112, 119]))["signal"].iloc[-1]          # 저가 110.9 → 절반 이탈
+    assert not S.surge_hold(_surge([120, 113, 119]))["signal"].iloc[-1]                # 저가 111.9 → 엄격 기준 탈락
+    assert S.surge_hold(_surge([120, 113, 119]), basis="close")["signal"].iloc[-1]     # 종가 113 → 종가 기준 통과
+    assert not S.surge_hold(_surge([127, 129, 131]))["signal"].iloc[-1]          # 계속 상승 = 차익매물 없음
+    assert not S.surge_hold(_surge([120, 116, 119], surge_vol=1.5e6))["signal"].iloc[-1]  # 거래량 부족(주도주 아님)
+    assert not S.surge_hold(_surge([120, 116, 119], rest_vol=5e5))["signal"].iloc[-1]     # 매물이 안 나옴
+
+
+def test_surge_hold_progress_and_backtest_stop():
+    prog = S.surge_hold_progress(_surge([120]))
+    assert prog["day"] == 1 and prog["support"] == pytest.approx(112.5) and prog["min_low"] == pytest.approx(118.8)
+    assert S.surge_hold_progress(_surge([110])) is None                          # 이미 이탈
+    assert S.surge_hold_progress(_surge([]))["day"] == 0                         # 오늘 급등
+    df = _surge([120, 116, 119, 118, 111])
+    df["Open"] = df["Close"]
+    res = S.surge_hold(df)
+    tr = B.simulate("X", df, res["signal"], "fixed", cost_pct=0, stop_levels=res["support"])
+    assert tr[0].reason == "손절" and tr[0].exit == pytest.approx(111)          # 지지선 112.5 이탈, 갭하락이라 시가 청산

@@ -20,6 +20,7 @@ LABEL = {
     "leaders": "폭락장 버팀목(켈)",
     "breakout_setup": "급등 후 휴식(헨)",
     "high20_near": "20일 신고가 임박(터틀)",
+    "surge_hold": "급등 후 절반 지지 확인중",
     "cycle": "사이클 바닥(PSR)",
     "position": "보유종목",
 }
@@ -110,6 +111,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     dc = cfg.strat("donchian")
     ep, xp = dc.get("entry_period", 20), dc.get("exit_period", 10)
     near: list[tuple[float, str]] = []
+    stops: dict[str, float] = {}          # 기법이 정한 손절가 (급등 후 절반 지지선)
 
     for t, df in tradable.items():
         try:
@@ -140,6 +142,18 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
                 dist = (hi - c) / hi * 100
                 if dist <= dc.get("near_pct", 3):
                     near.append((dist, t))
+            if _on(cfg, "surge_hold"):
+                sp = _params(cfg, "surge_hold")
+                sh = S.surge_hold(df, **sp)
+                if sh["signal"].iloc[-1]:
+                    sup = float(sh["support"].iloc[-1])
+                    buy_signals.setdefault(t, []).append(f"급등 후 {sp['hold_days']}일 절반 지지")
+                    stops[t] = sup
+                    hits["surge_hold"][t] = {"support": sup, "day": sp["hold_days"]}
+                else:
+                    prog = S.surge_hold_progress(df, **sp)
+                    if prog:
+                        hits["surge_hold"][t] = prog
             levels[t] = _levels(df, ma_period, ep, xp)
         except Exception as e:
             log.debug("스캔 오류 %s: %s", t, e)
@@ -166,7 +180,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for strat, d in hits.items():
         for t in d:
             sources.setdefault(t, []).append(strat)
-    prio = {"position": 100, "breakout_setup": 10}
+    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10}
     ranked = sorted(sources, key=lambda t: (max(prio.get(s, 0) for s in sources[t]), len(sources[t])), reverse=True)
     watch = {}
     for t in ranked[: cfg["intraday"]["max_watch"]]:
@@ -179,6 +193,11 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
             w["support"] = hits["price_defense"][t]["support"]
         if t in hits["cycle"]:
             w["target"] = hits["cycle"][t]["target_price"]
+        if t in hits["surge_hold"]:
+            w["half_support"] = hits["surge_hold"][t]["support"]
+            w["surge_day"] = hits["surge_hold"][t]["day"]
+            w["surge_close"] = hits["surge_hold"][t].get("surge_close")
+            w["min_low_since"] = hits["surge_hold"][t].get("min_low")
         watch[t] = w
     store.replace_watch(market, watch)
 
@@ -187,15 +206,16 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for t, sigs in buy_signals.items():
         src = [s for s in sources.get(t, []) if s != "position"]
         turtle = any("최고가 돌파" in s for s in sigs)
-        standalone = turtle or any("돌파 매수" in s for s in sigs)
-        src = [s for s in src if s != "high20_near"]
+        standalone = turtle or t in stops or any("돌파 매수" in s for s in sigs)
+        src = [s for s in src if s not in ("high20_near", "surge_hold")]
         if not (standalone or src):
             continue
         mode = "turtle" if turtle else "fixed"
-        plan = S.plan_for(cfg, market, levels[t]["close"], mode, levels[t]["low10"])
+        plan = S.plan_for(cfg, market, levels[t]["close"], mode, levels[t]["low10"], stop_price=stops.get(t))
         df = tradable[t]
         vol_ratio = float(df["Volume"].iloc[-1] / max(df["Volume"].iloc[-21:-1].mean(), 1))
         recs.append({"ticker": t, "name": names.get(t, t), "signals": sigs, "mode": mode,
+                     "method_stop": stops.get(t),
                      "sources": [LABEL[s] for s in src], "score": len(sigs) + len(src),
                      "vol_ratio": vol_ratio, **asdict(plan)})
     recs.sort(key=lambda r: (r["score"], r["vol_ratio"]), reverse=True)

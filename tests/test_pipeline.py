@@ -135,3 +135,43 @@ def test_buy_two_percent_warning(tmp_path, monkeypatch):
     assert "9,600원" in out and "먼저 옵니다" in out and "-2.0%" in out
     out = app.handle("/buy 000660 10000 50 turtle")
     assert "최저가" in out
+
+
+def test_surge_hold_intraday(tmp_path):
+    from stockbot.monitor import check_surge_hold
+
+    cfg = load_config(tmp_path / "none.yaml")
+    w = {"name": "급등주", "half_support": 112.5, "surge_day": 2, "surge_close": 125, "min_low_since": 114.8,
+         "sources": ["surge_hold"]}
+    ok = check_surge_hold(cfg, "KR", "123450", w, Quote(119, 121, 117), closing=True)
+    assert ok[0][0] == "surge_hold_buy" and "stop=" in ok[0][1] and "절반" in ok[0][1]
+    assert check_surge_hold(cfg, "KR", "123450", w, Quote(119, 121, 117), closing=False) == []
+    broken = check_surge_hold(cfg, "KR", "123450", w, Quote(113, 118, 111), closing=False)
+    assert broken[0][0] == "half_broken"
+
+
+def test_scan_finds_surge_hold(tmp_path):
+    cfg, store, uni, prices, index = setup(tmp_path)
+    n = 200
+    close = [10000] * (n - 4) + [12500, 12000, 11600, 11900]
+    vol = [1e6] * (n - 4) + [3e6, 1.5e6, 1.5e6, 1.5e6]
+    prices["000040"] = make(close, vol)
+    uni = pd.concat([uni, pd.DataFrame({"Ticker": ["000040"], "Name": ["델타"], "Market": "KOSPI",
+                                        "Sector": ["조선"], "Marcap": None, "Shares": None})])
+    res = screener.scan(cfg, store, "KR", uni, prices, index)
+    rec = next(r for r in res["recommendations"] if r["ticker"] == "000040")
+    assert rec["method_stop"] == 11250 and rec["stop"] == 11250 and "절반 지지" in rec["signals"][0]
+    assert store.watch("KR")["000040"]["half_support"] == 11250
+
+
+def test_buy_with_explicit_stop(tmp_path, monkeypatch):
+    from stockbot import app as A
+
+    cfg = load_config(tmp_path / "none.yaml")
+    cfg.raw["data_dir"] = str(tmp_path)
+    monkeypatch.setattr(A, "QuoteProvider", lambda c: FakeProvider({}))
+    app = A.App(cfg)
+    out = app.handle("/buy 000040 11900 stop=11250")
+    pos = app.store.positions()[0]
+    assert pos["stop"] == 11250 and "11,250원" in out
+    assert "낮아야" in app.handle("/buy 000040 11900 stop=12000")

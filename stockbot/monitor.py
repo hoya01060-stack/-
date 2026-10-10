@@ -2,11 +2,23 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time as dtime, timedelta
+from zoneinfo import ZoneInfo
 
 from . import strategies as S
 from .notifier import esc
 
 log = logging.getLogger(__name__)
+TZ = {"KR": ZoneInfo("Asia/Seoul"), "US": ZoneInfo("America/New_York")}
+
+
+def near_close(cfg, market: str, now: datetime | None = None) -> bool:
+    """장 마감 전 N분 이내인가 (급등 후 지지 3일째 '종가 매수' 알림용)."""
+    now = now or datetime.now(TZ[market])
+    end = dtime.fromisoformat(cfg["schedule"][market]["intraday_end"])
+    mins = cfg.strat("surge_hold").get("alert_before_close_min", 30)
+    start = (datetime.combine(now.date(), end) - timedelta(minutes=mins)).time()
+    return start <= now.time() <= end
 
 
 def fmt_price(market: str, p: float | None) -> str:
@@ -60,8 +72,8 @@ def check_position(cfg, pos: dict, price: float, w: dict | None) -> list[tuple[s
     return out
 
 
-def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed") -> str:
-    plan = S.plan_for(cfg, market, price, mode, w.get("low10"))
+def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_price=None) -> str:
+    plan = S.plan_for(cfg, market, price, mode, w.get("low10"), stop_price=stop_price)
     from .screener import LABEL
 
     src = ", ".join(LABEL.get(s, s) for s in w.get("sources", []))
@@ -70,15 +82,44 @@ def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed") -> str:
              f"계획: {plan.qty:,}주(약 {fmt_price(market, plan.amount)}) · 손절 {fmt_price(market, plan.stop)}"
              + (f" · 익절 {fmt_price(market, plan.take)}" if plan.take else "")
              + f" · 손절 시 계좌 -{plan.risk_pct:.1f}%"]
+    num = (lambda x: f"{x:.0f}") if market == "KR" else (lambda x: f"{x:.2f}")
+    if stop_price:
+        lines.append(f"손절 기준: 상승분 절반 지지선 이탈 → 등록: /buy {t} {num(price)} {plan.qty} stop={num(plan.stop)}")
     if mode == "turtle":
         lines.append(f"매도 규칙: {cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도"
-                     f" → 등록: /buy {t} {round(price) if market == 'KR' else round(price, 2)} {plan.qty} turtle")
+                     f" → 등록: /buy {t} {num(price)} {plan.qty} turtle")
     if w.get("target"):
         lines.append(f"사이클 목표가: {fmt_price(market, w['target'])}")
     lines.append("※ 장중 신호입니다. 종가에서 조건이 유지되는지 확인하세요.")
     if regime and regime.get("state") == "RISK_OFF":
         lines.append("⚠️ 시장 위험회피 국면 — 비중 축소 / 안전자산 고려")
     return "\n".join(lines)
+
+
+def check_surge_hold(cfg, market, t, w, q, closing: bool) -> list[tuple[str, str]]:
+    """급등 후 절반 지지: 지지선 붕괴 경고 / 3일째 마감 무렵 지지 유지 시 매수 알림."""
+    sup = w.get("half_support")
+    if not sup:
+        return []
+    sp = cfg.strat("surge_hold")
+    k = sp.get("hold_days", 3)
+    day = w.get("surge_day", 0) + 1          # 오늘이 급등 후 며칠째인지 (어제 스캔 기준 +1)
+    low = q.low if q.low is not None else q.price
+    check = low if sp.get("basis", "low") == "low" else q.price
+    if day > k + 1:
+        return []
+    if check < sup:
+        return [("half_broken", f"⚪ <b>지지 실패</b> {esc(w.get('name', t))}({t}) {fmt_price(market, q.price)}\n"
+                                f"급등 상승분 절반({fmt_price(market, sup)}) 이탈 → 매수 후보에서 제외")]
+    if day == k and closing:
+        lows = [x for x in (w.get("min_low_since"), low) if x is not None]
+        pulled = not sp.get("require_pullback", True) or (w.get("surge_close") and min(lows) < w["surge_close"])
+        if pulled:
+            return [("surge_hold_buy", buy_message(
+                cfg, market, t, w, q.price,
+                f"하루 +{sp.get('surge_pct', 20)}% 급등 후 {k}일간 차익매물에도 상승분 절반({fmt_price(market, sup)}) 지지",
+                None, stop_price=sup))]
+    return []
 
 
 def run_intraday(cfg, store, tg, provider, market: str) -> int:
@@ -92,12 +133,17 @@ def run_intraday(cfg, store, tg, provider, market: str) -> int:
     regime = store.get(f"regime_{market}")
     suppress = cfg["regime"].get("suppress_buys_in_risk_off") and regime and regime.get("state") == "RISK_OFF"
     held = {p["ticker"] for p in positions}
+    closing = near_close(cfg, market)
     msgs = []
     for t, w in watch.items():
         q = quotes.get(t)
         if not q or t in held or suppress:
             continue
         p = q.price
+        for key, msg in check_surge_hold(cfg, market, t, w, q, closing):
+            if store.mark_alert(market, t, key):
+                msgs.append(msg + ("\n⚠️ 시장 위험회피 국면 — 비중 축소 / 안전자산 고려"
+                                   if key == "surge_hold_buy" and regime and regime.get("state") == "RISK_OFF" else ""))
         if w.get("pivot") and p > w["pivot"] and store.mark_alert(market, t, "breakout"):
             msgs.append(buy_message(cfg, market, t, w, p,
                                     f"급등 후 휴식 고점 {fmt_price(market, w['pivot'])} 돌파 (데이비드 헨)", regime))

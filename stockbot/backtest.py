@@ -40,18 +40,23 @@ def signal_series(name: str, df: pd.DataFrame, cfg) -> pd.Series:
         return S.ma_cross_up(df, p.get("period", 10))
     if name in ("breakout", "breakout_signal"):
         return S.breakout_signal(df, **p)
+    if name == "surge_hold":
+        return S.surge_hold(df, **{k: v for k, v in cfg.strat("surge_hold").items()
+                                   if k not in ("enabled", "alert_before_close_min")})
     if name == "donchian":
         return S.high_breakout(df, p.get("entry_period", 20))
     raise ValueError(f"지원하지 않는 전략: {name}")
 
 
 def simulate(ticker: str, df: pd.DataFrame, signal: pd.Series, exit_mode="fixed", stop_pct=5, take_pct=15,
-             ma_period=10, max_hold=60, cost_pct=0.3, exit_period=10) -> list[Trade]:
+             ma_period=10, max_hold=60, cost_pct=0.3, exit_period=10,
+             stop_levels: pd.Series | None = None) -> list[Trade]:
     """exit_mode: fixed(-stop/+take) | trend(-stop + 10일선 종가 이탈) | turtle(10일 최저가 이탈, 손절 겸용)"""
     o, h, l, c = (df[k].to_numpy(float) for k in ("Open", "High", "Low", "Close"))
     ma = df["Close"].rolling(ma_period).mean().to_numpy()
     low_exit = S.donchian_low(df, exit_period).to_numpy()
     sig = signal.reindex(df.index).fillna(False).to_numpy(bool)
+    lvl = stop_levels.reindex(df.index).to_numpy(float) if stop_levels is not None else None
     idx = df.index
     trades, i, n = [], 0, len(df)
     while i < n - 1:
@@ -64,6 +69,8 @@ def simulate(ticker: str, df: pd.DataFrame, signal: pd.Series, exit_mode="fixed"
             i += 1
             continue
         stop, take = entry * (1 - stop_pct / 100), entry * (1 + take_pct / 100)
+        if lvl is not None and not np.isnan(lvl[i]) and lvl[i] < entry:
+            stop = lvl[i]                      # 신호일 기준 기법 손절가 (fixed/trend)
         if exit_mode == "turtle":
             stop = 0.0
         exit_px, reason, j = None, "", e
@@ -106,7 +113,10 @@ def run(cfg, prices: dict[str, pd.DataFrame], strategy: str, exit_mode: str, cos
         if len(df) < 150:
             continue
         sig = signal_series(strategy, df, cfg)
+        stop_levels = None
+        if isinstance(sig, pd.DataFrame):          # 기법 자체 손절가가 있는 전략 (급등 후 절반 지지)
+            sig, stop_levels = sig["signal"], sig["support"]
         all_trades += simulate(t, df, sig, exit_mode, risk["stop_loss_pct"], risk["take_profit_pct"],
                                cfg.strat("ma10").get("period", 10), cost_pct=cost_pct,
-                               exit_period=cfg.strat("donchian").get("exit_period", 10))
+                               exit_period=cfg.strat("donchian").get("exit_period", 10), stop_levels=stop_levels)
     return summarize(all_trades), all_trades
