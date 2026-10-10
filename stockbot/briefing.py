@@ -137,18 +137,24 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
     for r in recs[:10]:
         L.append(f"• <b>{esc(r['name'])}</b>({r['ticker']}) {fmt_price(market, r['entry'])} — {', '.join(r['signals'])}"
                  + (f" | 근거: {', '.join(r['sources'])}" if r["sources"] else ""))
-        L.append(f"   {r['qty']:,}주 · 손절 {fmt_price(market, r['stop'])} · 익절 {fmt_price(market, r['take'])}")
+        exit_rule = (f"익절 {fmt_price(market, r['take'])}" if r.get("take")
+                     else f"{cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도")
+        L.append(f"   {r['qty']:,}주 · 손절 {fmt_price(market, r['stop'])}(계좌 -{r.get('risk_pct', 0):.1f}%) · {exit_rule}"
+                 f" · /buy 모드 {r.get('mode', 'fixed')}")
     if regime["state"] == "RISK_OFF" and recs:
         L.append("⚠️ 위험회피 국면이므로 비중을 줄이거나 보류를 권장합니다.")
 
     L += ["", "<b>■ 관심종목 (기법별 포착)</b>"]
-    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "leaders", "cycle"):
+    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "high20_near",
+                "leaders", "cycle"):
         items = scan.get("hits", {}).get(key, [])
         if not items:
             continue
         def extra(it):
             if key == "breakout_setup":
                 return f" 돌파가 {fmt_price(market, it['pivot'])}"
+            if key == "high20_near":
+                return f" 돌파가 {fmt_price(market, it['high20'])}"
             if key == "price_defense":
                 return f" 지지 {fmt_price(market, it['support'])}"
             if key == "cycle":

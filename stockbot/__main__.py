@@ -22,7 +22,7 @@ def main():
     ap.add_argument("--config", default=None)
     ap.add_argument("--no-send", action="store_true", help="텔레그램 대신 화면에 출력")
     ap.add_argument("--strategy", default="all",
-                    help="backtest: volume_dryup|price_defense|volume_surge_sideways|ma10|breakout|all")
+                    help="backtest: volume_dryup|price_defense|volume_surge_sideways|ma10|breakout|donchian|all")
     ap.add_argument("--limit", type=int, default=0, help="backtest: 종목 수 제한(0=전체)")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
@@ -59,19 +59,21 @@ def _backtest(cfg, app, a):
     prices = app.prices.update(a.market, uni)
     ucfg = cfg["universe"][a.market]
     prices = {t: df for t, df in prices.items() if D.liquid(df, ucfg["min_price"], ucfg["min_avg_value"])}
-    names = ["volume_dryup", "price_defense", "volume_surge_sideways", "ma10", "breakout"] \
+    names = ["volume_dryup", "price_defense", "volume_surge_sideways", "ma10", "breakout", "donchian"] \
         if a.strategy == "all" else [a.strategy]
     print(f"\n{a.market} 백테스트 · {len(prices)}종목 · 왕복비용 0.3% 차감 · 생존편향 있음(상장폐지 종목 제외)\n")
     print(f"{'전략':<24}{'청산':<8}{'거래수':>7}{'승률%':>8}{'평균%':>8}{'평균이익%':>10}{'평균손실%':>10}{'PF':>6}{'보유일':>7}")
     for n in names:
-        for mode in ("fixed", "trend"):
+        for mode in ("fixed", "trend", "turtle"):
             s, _ = B.run(cfg, prices, n, mode)
             if not s["trades"]:
                 print(f"{n:<24}{mode:<8}{0:>7}")
                 continue
             print(f"{n:<24}{mode:<8}{s['trades']:>7}{s['win_rate']:>8.1f}{s['avg_ret']:>8.2f}{s['avg_win']:>10.2f}"
                   f"{s['avg_loss']:>10.2f}{s['profit_factor']:>6.2f}{s['avg_days']:>7.1f}")
-    print("\nfixed = -5% 손절/+15% 익절, trend = -5% 손절 + 10일선 이탈 매도. PF(손익비 총합) > 1 이면 수익.")
+    print("\nfixed = -5% 손절/+15% 익절, trend = -5% 손절 + 10일선 이탈 매도, turtle = 10일 최저가 이탈 매도.")
+    print("수익률은 '종목 기준'입니다. 실제 계좌 손실은 2% 규칙에 따른 수량 조절로 1회 최대 2% 이내로 제한됩니다.")
+    print("PF(총이익/총손실) > 1 이면 수익.")
 
 
 if __name__ == "__main__":

@@ -106,3 +106,32 @@ def test_buy_command(tmp_path, monkeypatch):
     assert "삼성" not in app.handle("/pos") and "NVDA" in app.handle("/pos")
     assert "1건 종료" in app.handle("/sell 005930")
     assert A.market_of("0001A0") == "KR" and A.market_of("AAPL") == "US"
+
+
+def test_turtle_intraday_and_exit(tmp_path):
+    cfg, store, uni, prices, index = setup(tmp_path)
+    screener.scan(cfg, store, "KR", uni, prices, index)
+    w = store.watch("KR")
+    assert "high20" in w["000010"] and "low10" in w["000010"]
+    tg = FakeTG()
+    # C(감마)는 꾸준히 상승 → 20일 신고가 임박 목록 → 장중 돌파 시 알림
+    assert "000030" in w and "high20_near" in w["000030"]["sources"]
+    run_intraday(cfg, store, tg, FakeProvider({"000030": w["000030"]["high20"] * 1.005}), "KR")
+    assert any("20일 최고가" in m and "turtle" in m for m in tg.sent)
+    pos = {"market": "KR", "ticker": "000030", "name": "감마", "entry_price": 12000, "adds_done": 0,
+           "mode": "turtle", "stop": 9000, "take": None}
+    keys = [k for k, _, _ in check_position(cfg, pos, w["000030"]["low10"] * 0.99, w["000030"])]
+    assert keys == ["low10_break"]
+
+
+def test_buy_two_percent_warning(tmp_path, monkeypatch):
+    from stockbot import app as A
+
+    cfg = load_config(tmp_path / "none.yaml")
+    cfg.raw["data_dir"] = str(tmp_path)
+    monkeypatch.setattr(A, "QuoteProvider", lambda c: FakeProvider({}))
+    app = A.App(cfg)
+    out = app.handle("/buy 005930 10000 500")       # 500만원어치: -5%면 계좌 -2.5% → 2% 한도가 먼저
+    assert "9,600원" in out and "먼저 옵니다" in out and "-2.0%" in out
+    out = app.handle("/buy 000660 10000 50 turtle")
+    assert "최저가" in out

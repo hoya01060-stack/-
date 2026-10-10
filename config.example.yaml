@@ -67,6 +67,13 @@ strategies:
     max_rest: 3
     max_pullback_pct: 8    # 횡보 중 고점 대비 최대 눌림
     pyramid_levels_pct: [5, 10]   # 매수가 대비 +5%, +10% 에서 불타기 알림
+  # 2-4 20일 신고가 돌파 매수 / 10일 신저가 이탈 매도 (터틀 방식)
+  donchian:
+    enabled: true
+    entry_period: 20       # 최근 20일 최고가를 뚫으면 매수
+    exit_period: 10        # 최근 10일 최저가를 깨면 전량 매도
+    near_pct: 3            # 20일 최고가 3% 이내 종목을 장중 감시
+    near_watch_max: 60     # 그중 최대 감시 종목 수
   # 3 사이클 주식 바닥 (마취과 의사) - 주 1회 재무데이터 갱신
   cycle:
     enabled: true
@@ -82,7 +89,8 @@ strategies:
 risk:
   stop_loss_pct: 5       # 기법 4: -5% 손절
   take_profit_pct: 15    # 기법 4: +15% 익절
-  default_exit_mode: fixed   # fixed(-5/+15) | trend(10일선 이탈 시 매도 + 불타기)
+  account_risk_pct: 2    # 한 종목에서 계좌의 2%를 넘게 잃기 전에 무조건 손절 (모든 매수에 적용)
+  default_exit_mode: fixed   # fixed(-5/+15) | trend(10일선 이탈 매도 + 불타기) | turtle(10일 최저가 이탈 전량 매도) | cycle
 
 regime:
   # 기법 4-2: 하락장 자산 방어 (레이 달리오)

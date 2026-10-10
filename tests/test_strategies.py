@@ -130,3 +130,36 @@ def test_backtest_fixed_and_trend():
     assert tr2[0].reason == "손절" and tr2[0].ret_pct == pytest.approx(-5)
     s = B.summarize(tr + tr2)
     assert s["trades"] == 2 and s["win_rate"] == 50 and s["profit_factor"] == pytest.approx(3)
+
+
+def test_donchian_breakout_and_breakdown():
+    close = [100] * 25 + [101, 99, 103]          # 직전 20일 고가 101*1.01=102.01 → 103 돌파
+    df = make(close)
+    assert S.high_breakout(df).iloc[-1] and not S.high_breakout(df).iloc[-2]
+    down = [100] * 25 + [97]                     # 직전 10일 저가 99 → 97 이탈
+    assert S.low_breakdown(make(down)).iloc[-1]
+    assert not S.low_breakdown(make([100] * 26)).iloc[-1]
+
+
+def test_two_percent_rule_sizing():
+    # 계좌 1,000만원, 10종목 → 1종목 100만원. 손절 -5%면 손실 5만원(0.5%) → 2% 규칙에 안 걸림
+    p = S.position_plan(10000, 10_000_000, 10, 5, 15)
+    assert p.qty == 100 and p.stop == 9500 and p.risk_pct == pytest.approx(0.5)
+    # 손절폭이 넓은 경우(10일 최저가 7,000원, -30%): 동일비중이면 3% 손실 → 수량을 줄여 2%로 제한
+    p2 = S.position_plan(10000, 10_000_000, 10, 5, None, stop_price=7000, account_risk_pct=2)
+    assert p2.qty == 66 and p2.risk_pct <= 2.0 and p2.take is None
+    # 계좌 2% 손실 가격
+    assert S.account_stop(10000, 1000, 10_000_000, 2) == pytest.approx(9800)
+    # 손절폭보다 2% 가격이 먼저 오면 그 가격이 손절가
+    p3 = S.position_plan(10000, 10_000_000, 1, 5, 15, account_risk_pct=2)   # 1종목 몰빵
+    assert p3.stop == pytest.approx(10000 - 200_000 / p3.qty) and p3.risk_pct == pytest.approx(2, abs=0.01)
+
+
+def test_backtest_turtle_exit():
+    close = [100] * 30 + [105, 110, 115, 112, 108, 104, 99]
+    df = make(close, spread=0.0)
+    df["Open"] = df["Close"]
+    sig = pd.Series(False, index=df.index)
+    sig.iloc[30] = True                             # 105 돌파 다음 날 시가 110 매수
+    tr = B.simulate("X", df, sig, "turtle", cost_pct=0)
+    assert tr[0].reason == "10일 최저가 이탈" and tr[0].exit == pytest.approx(99)

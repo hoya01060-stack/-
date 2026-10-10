@@ -138,6 +138,26 @@ def breakout_signal(df: pd.DataFrame, **params) -> pd.Series:
     return (s["setup"].shift(1, fill_value=False) & (df["Close"] > s["pivot"].shift(1))).fillna(False)
 
 
+def donchian_high(df: pd.DataFrame, period=20) -> pd.Series:
+    """직전 period일(오늘 제외) 최고가."""
+    return df["High"].rolling(period).max().shift(1)
+
+
+def donchian_low(df: pd.DataFrame, period=10) -> pd.Series:
+    """직전 period일(오늘 제외) 최저가."""
+    return df["Low"].rolling(period).min().shift(1)
+
+
+def high_breakout(df: pd.DataFrame, entry_period=20, **_) -> pd.Series:
+    """2-4 매수: 종가가 최근 20일 최고가를 뚫은 날."""
+    return (df["Close"] > donchian_high(df, entry_period)).fillna(False)
+
+
+def low_breakdown(df: pd.DataFrame, exit_period=10, **_) -> pd.Series:
+    """2-4 매도: 종가가 최근 10일 최저가를 깬 날 (장중 알림은 현재가 기준)."""
+    return (df["Close"] < donchian_low(df, exit_period)).fillna(False)
+
+
 @dataclass
 class Resilience:
     excess_on_down_days: float   # 지수 하락일 평균 초과수익(%p)
@@ -239,14 +259,46 @@ class PositionPlan:
     qty: int
     amount: float
     stop: float
-    take: float
+    take: float | None
+    risk_pct: float = 0.0        # 손절 시 계좌 대비 손실률(%)
 
 
-def position_plan(price: float, capital: float, max_positions: int, stop_loss_pct=5, take_profit_pct=15) -> PositionPlan:
-    """4-1 동일비중 매수 + 기계적 손절(-5%)/익절(+15%)."""
-    amount = capital / max(max_positions, 1)
-    qty = int(amount // price) if price > 0 else 0
-    return PositionPlan(price, qty, qty * price, price * (1 - stop_loss_pct / 100), price * (1 + take_profit_pct / 100))
+def account_stop(entry: float, qty: float, capital: float, account_risk_pct=2) -> float:
+    """4-3 계좌 2% 손실 한도: 이 가격까지 떨어지면 손실이 계좌의 2%가 됨."""
+    if qty <= 0:
+        return 0.0
+    return entry - capital * account_risk_pct / 100 / qty
+
+
+def position_plan(price: float, capital: float, max_positions: int, stop_loss_pct=5, take_profit_pct=15,
+                  stop_price: float | None = None, account_risk_pct=2) -> PositionPlan:
+    """4-1 동일비중 매수 + 기계적 손절/익절, 4-3 계좌 2% 손실 한도.
+
+    수량 = min(동일비중 수량, 계좌의 account_risk_pct% / 1주당 손절폭)
+    손절가 = max(기법 손절가, 계좌 2% 손실 가격)  → 둘 중 먼저 닿는 가격에서 판다.
+    stop_price 를 주면(예: 10일 최저가) 그것을 기법 손절가로, 없으면 -stop_loss_pct%.
+    take_profit_pct=None 이면 익절가 없음.
+    """
+    stop = stop_price if stop_price is not None else price * (1 - stop_loss_pct / 100)
+    qty = int((capital / max(max_positions, 1)) // price) if price > 0 else 0
+    per_share = price - stop
+    if per_share > 0:
+        qty = min(qty, int(capital * account_risk_pct / 100 // per_share))
+    if qty > 0:
+        stop = max(stop, account_stop(price, qty, capital, account_risk_pct))
+    take = price * (1 + take_profit_pct / 100) if take_profit_pct is not None else None
+    risk = (price - stop) * qty / capital * 100 if capital and qty else 0.0
+    return PositionPlan(price, qty, qty * price, stop, take, risk)
+
+
+def plan_for(cfg, market: str, price: float, mode: str = "fixed", exit_low: float | None = None) -> PositionPlan:
+    """설정값으로 매수 계획 산출. mode=turtle 이면 손절=10일 최저가, 익절 없음."""
+    r = cfg["risk"]
+    turtle = mode == "turtle" and exit_low is not None and exit_low < price
+    return position_plan(price, cfg["capital"][market], cfg["max_positions"], r["stop_loss_pct"],
+                         None if mode in ("turtle", "trend", "cycle") else r["take_profit_pct"],
+                         stop_price=exit_low if turtle else None,
+                         account_risk_pct=r.get("account_risk_pct", 2))
 
 
 def market_regime(index_close: pd.Series, crash_drawdown_pct=15) -> dict:

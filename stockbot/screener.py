@@ -19,6 +19,7 @@ LABEL = {
     "volume_surge_sideways": "거래량 폭증+횡보(시겔)",
     "leaders": "폭락장 버팀목(켈)",
     "breakout_setup": "급등 후 휴식(헨)",
+    "high20_near": "20일 신고가 임박(터틀)",
     "cycle": "사이클 바닥(PSR)",
     "position": "보유종목",
 }
@@ -31,6 +32,15 @@ def _params(cfg, name):
 
 def _on(cfg, name):
     return cfg.strat(name).get("enabled", True)
+
+
+def _levels(df: pd.DataFrame, ma_period: int, entry_period: int, exit_period: int) -> dict:
+    """다음 거래일 장중 판단용 기준가 (오늘 종가까지 반영)."""
+    closes = df["Close"].iloc[-(ma_period - 1):]
+    return {"close": float(df["Close"].iloc[-1]), "ma10": float(df["Close"].iloc[-ma_period:].mean()),
+            "sum9": float(closes.sum()), "n9": len(closes),
+            "high20": float(df["High"].iloc[-entry_period:].max()),   # 내일 이 가격을 넘으면 20일 신고가
+            "low10": float(df["Low"].iloc[-exit_period:].min())}      # 내일 이 가격을 깨면 10일 신저가
 
 
 def find_leaders(cfg, prices: dict[str, pd.DataFrame], index_close: pd.Series) -> tuple[list[dict], bool]:
@@ -97,6 +107,9 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     buy_signals: dict[str, list[str]] = {}
     levels: dict[str, dict] = {}
     ma_period = cfg.strat("ma10").get("period", 10)
+    dc = cfg.strat("donchian")
+    ep, xp = dc.get("entry_period", 20), dc.get("exit_period", 10)
+    near: list[tuple[float, str]] = []
 
     for t, df in tradable.items():
         try:
@@ -120,9 +133,14 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
                     buy_signals.setdefault(t, []).append("돌파 매수(헨)")
             if _on(cfg, "ma10") and S.ma_cross_up(df, ma_period).iloc[-1]:
                 buy_signals.setdefault(t, []).append(f"{ma_period}일선 상향 돌파(켈)")
-            closes = df["Close"].iloc[-(ma_period - 1):]
-            levels[t] = {"close": c, "ma10": float(df["Close"].iloc[-ma_period:].mean()),
-                         "sum9": float(closes.sum()), "n9": len(closes)}
+            if _on(cfg, "donchian"):
+                if S.high_breakout(df, ep).iloc[-1]:
+                    buy_signals.setdefault(t, []).append(f"{ep}일 최고가 돌파(터틀)")
+                hi = float(df["High"].iloc[-ep:].max())
+                dist = (hi - c) / hi * 100
+                if dist <= dc.get("near_pct", 3):
+                    near.append((dist, t))
+            levels[t] = _levels(df, ma_period, ep, xp)
         except Exception as e:
             log.debug("스캔 오류 %s: %s", t, e)
 
@@ -137,11 +155,11 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for pos in positions:
         hits["position"][pos["ticker"]] = {}
         df = prices.get(pos["ticker"])
-        if df is not None and pos["ticker"] not in levels:
-            closes = df["Close"].iloc[-(ma_period - 1):]
-            levels[pos["ticker"]] = {"close": float(df["Close"].iloc[-1]),
-                                     "ma10": float(df["Close"].iloc[-ma_period:].mean()),
-                                     "sum9": float(closes.sum()), "n9": len(closes)}
+        if df is not None and len(df) and pos["ticker"] not in levels:
+            levels[pos["ticker"]] = _levels(df, ma_period, ep, xp)
+    near.sort()
+    hits["high20_near"] = {t: {"high20": levels[t]["high20"], "dist_pct": d}
+                           for d, t in near[: dc.get("near_watch_max", 60)]}
 
     # 감시목록: 출처(기법) 수가 많을수록, 보유/돌파대기 종목 우선
     sources: dict[str, list[str]] = {}
@@ -168,14 +186,19 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     recs = []
     for t, sigs in buy_signals.items():
         src = [s for s in sources.get(t, []) if s != "position"]
-        is_breakout = any("돌파 매수" in s for s in sigs)
-        if not (is_breakout or src):
+        turtle = any("최고가 돌파" in s for s in sigs)
+        standalone = turtle or any("돌파 매수" in s for s in sigs)
+        src = [s for s in src if s != "high20_near"]
+        if not (standalone or src):
             continue
-        plan = S.position_plan(levels[t]["close"], cfg["capital"][market], cfg["max_positions"],
-                               cfg["risk"]["stop_loss_pct"], cfg["risk"]["take_profit_pct"])
-        recs.append({"ticker": t, "name": names.get(t, t), "signals": sigs,
-                     "sources": [LABEL[s] for s in src], "score": len(sigs) + len(src), **asdict(plan)})
-    recs.sort(key=lambda r: r["score"], reverse=True)
+        mode = "turtle" if turtle else "fixed"
+        plan = S.plan_for(cfg, market, levels[t]["close"], mode, levels[t]["low10"])
+        df = tradable[t]
+        vol_ratio = float(df["Volume"].iloc[-1] / max(df["Volume"].iloc[-21:-1].mean(), 1))
+        recs.append({"ticker": t, "name": names.get(t, t), "signals": sigs, "mode": mode,
+                     "sources": [LABEL[s] for s in src], "score": len(sigs) + len(src),
+                     "vol_ratio": vol_ratio, **asdict(plan)})
+    recs.sort(key=lambda r: (r["score"], r["vol_ratio"]), reverse=True)
 
     result = {
         "market": market,
