@@ -40,6 +40,9 @@ def signal_series(name: str, df: pd.DataFrame, cfg) -> pd.Series:
         return S.ma_cross_up(df, p.get("period", 10))
     if name in ("breakout", "breakout_signal"):
         return S.breakout_signal(df, **p)
+    if name == "base":
+        return S.base_breakout(df, **{k: v for k, v in cfg.strat("base").items()
+                                      if k not in ("enabled", "near_pct", "near_watch_max")})
     if name == "pullback":
         return S.pullback_breakout(df, **{k: v for k, v in cfg.strat("pullback").items() if k != "enabled"})
     if name == "box":

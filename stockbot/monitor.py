@@ -168,6 +168,17 @@ def run_intraday(cfg, store, tg, provider, market: str) -> int:
         if w.get("pivot") and p > w["pivot"] and store.mark_alert(market, t, "breakout"):
             msgs.append(buy_message(cfg, market, t, w, p,
                                     f"급등 후 휴식 고점 {fmt_price(market, w['pivot'])} 돌파 (데이비드 헨)", regime))
+        if w.get("base_top") and p > w["base_top"]:
+            frac = max(session_fraction(market), 0.1)
+            need = cfg.strat("base").get("vol_mult", 3.0) * w.get("base_avg_vol", 0)
+            proj = (q.volume or 0) / frac
+            if q.volume is not None and proj >= need and store.mark_alert(market, t, "base_break"):
+                msgs.append(buy_message(
+                    cfg, market, t, w, p,
+                    f"{w.get('base_weeks', 8):.0f}주 횡보 박스권 상단 {fmt_price(market, w['base_top'])} 돌파"
+                    f" · 예상 거래량 평소의 {proj / max(w.get('base_avg_vol', 1), 1):.1f}배",
+                    regime, stop_price=w["base_top"], stop_label="돌파 가격(박스 상단)"))
+                continue
         if w.get("pb_pivot") and p > w["pb_pivot"]:
             frac = max(session_fraction(market), 0.1)
             need = cfg.strat("pullback").get("breakout_vol_mult", 1.5) * w.get("pb_avg_vol", 0)

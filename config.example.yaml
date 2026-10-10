@@ -114,6 +114,17 @@ strategies:
     max_drawdown_pct: 25    # 고점 대비 -25% 이상 빠지면 '방어 실패'
     breakout_vol_mult: 1.5  # 돌파일 거래량 >= 최근 50일 평균 x1.5 (거래량이 다시 붙음)
     min_close_strength: 0.5 # 종가가 당일 (고가-저가) 범위 상단 50% 이상 (강하게 뚫음)
+  # 2-8 8~10주 횡보 박스권 → 거래량 3배 동반 상단 돌파 매수 → 돌파 가격 이탈 시 즉시 손절
+  base:
+    enabled: true
+    min_len: 40             # 8주(거래일) 이상 횡보
+    max_len: 50             # 10주까지 횡보 기간 표시
+    max_range_pct: 15       # 기간 중 종가 최고/최저 폭 15% 이내 = 크게 오르거나 내리지 않음
+    vol_base: 50            # 평소 거래량 = 직전 50일 평균
+    vol_mult: 3.0           # 돌파일 거래량 >= 평소 x3
+    min_close_strength: 0.5 # 종가가 당일 범위 상단 50% 이상 (강하게 뚫음)
+    near_pct: 5             # 박스 상단 5% 이내 종목 장중 감시
+    near_watch_max: 40
   # 3 사이클 주식 바닥 (마취과 의사) - 주 1회 재무데이터 갱신
   cycle:
     enabled: true

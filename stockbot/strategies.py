@@ -323,6 +323,43 @@ def pullback_breakout(df: pd.DataFrame, **params) -> pd.DataFrame:
     return pd.DataFrame({"signal": sig, "support": sup}, index=df.index)
 
 
+def base_range(df: pd.DataFrame, min_len=40, max_len=50, max_range_pct=15, vol_base=50, **_) -> pd.DataFrame:
+    """2-8 8~10주 횡보(박스권) — 해당 날짜 종가까지 기준.
+
+    최근 min_len 거래일(8주) 종가 최고/최저 폭이 max_range_pct% 이내면 박스권.
+    top = 박스 상단(저항선, 최근 min_len일 최고 종가), avg_vol = 최근 vol_base일 평균 거래량(=평소 거래량)
+    """
+    c, v = df["Close"], df["Volume"]
+    top = c.rolling(min_len).max()
+    bottom = c.rolling(min_len).min()
+    setup = ((top / bottom - 1) <= max_range_pct / 100).fillna(False)
+    return pd.DataFrame({"setup": setup, "top": top, "bottom": bottom,
+                         "avg_vol": v.rolling(vol_base).mean()})
+
+
+def base_weeks(df: pd.DataFrame, min_len=40, max_len=50, max_range_pct=15, **_) -> float:
+    """오늘 기준 박스가 몇 주째 이어졌는지 (min_len~max_len 범위에서 가장 긴 기간, 주 단위)."""
+    c = df["Close"]
+    best = 0
+    for n in range(min_len, max_len + 1):
+        w = c.iloc[-n:]
+        if len(w) == n and w.max() / w.min() - 1 <= max_range_pct / 100:
+            best = n
+    return best / 5
+
+
+def base_breakout(df: pd.DataFrame, vol_mult=3.0, min_close_strength=0.5, **params) -> pd.DataFrame:
+    """2-8 매수: 어제까지 8주 이상 박스권이었고 오늘 종가가 박스 상단을 돌파,
+    거래량 >= 평소(직전 50일 평균) x vol_mult, 종가가 당일 범위 상단(강한 돌파). stop = 박스 상단(돌파 가격)."""
+    b = base_range(df, **params).shift(1)
+    h, l, c = df["High"], df["Low"], df["Close"]
+    rng = (h - l).replace(0, np.nan)
+    strength = ((c - l) / rng).fillna(1.0)
+    sig = (b["setup"].fillna(False).astype(bool) & (c > b["top"]) & (df["Volume"] >= vol_mult * b["avg_vol"])
+           & (strength >= min_close_strength)).fillna(False)
+    return pd.DataFrame({"signal": sig, "support": b["top"].where(sig)})
+
+
 @dataclass
 class Resilience:
     excess_on_down_days: float   # 지수 하락일 평균 초과수익(%p)

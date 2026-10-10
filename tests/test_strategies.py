@@ -276,3 +276,24 @@ def test_pullback_setup_and_breakout():
     assert not S.pullback_breakout(_leader(bo_close=140))["signal"].iloc[-1]     # 이전 고점 못 넘음
     flat = make([100] * 79, [1e6] * 79)
     assert S.pullback_setup_at(*_arr(flat), 78) is None                           # 급등 없음
+
+
+def _base(n=80, amp=0.03, bo_close=10600, bo_vol=3.5e6):
+    i = np.arange(n - 1)
+    close = list(10000 * (1 + amp * np.sin(2 * np.pi * i / 10))) + [bo_close]
+    vol = [1e6] * (n - 1) + [bo_vol]
+    df = make(close, vol)
+    df.iloc[-1, df.columns.get_loc("High")] = bo_close
+    return df
+
+
+def test_base_range_and_breakout():
+    df = _base()
+    br = S.base_range(df).iloc[-2]
+    assert br["setup"] and br["top"] == pytest.approx(10300, rel=2e-3)
+    assert S.base_weeks(df.iloc[:-1]) == 10                         # 50일 이상 횡보 → 10주
+    bo = S.base_breakout(df)
+    assert bo["signal"].iloc[-1] and bo["support"].iloc[-1] == pytest.approx(br["top"])
+    assert not S.base_breakout(_base(bo_vol=2.5e6))["signal"].iloc[-1]      # 거래량 2.5배 → 3배 미달
+    assert not S.base_breakout(_base(amp=0.1))["signal"].iloc[-1]           # 폭 ±10% → 박스권 아님
+    assert not S.base_breakout(_base(bo_close=10250))["signal"].iloc[-1]    # 상단 못 넘음

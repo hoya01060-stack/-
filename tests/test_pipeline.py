@@ -259,3 +259,35 @@ def test_pullback_scan_and_intraday(tmp_path, monkeypatch):
     run_intraday(cfg, store, tg, P({"vol": 1.5e6}), "KR")            # 하루 300만주 추정: 거래량 붙음
     msg = next(m for m in tg.sent if "주도주 눌림(조정" in m)
     assert "조정 최저가(방어선)" in msg and "stop=" in msg and msg.count("매수 타이밍") == 1
+
+
+def test_base_scan_intraday_and_stop(tmp_path, monkeypatch):
+    from stockbot import monitor
+    from .test_strategies import _base
+
+    cfg, store, uni, prices, index = setup(tmp_path)
+    prices["000080"] = _base(n=83).iloc[:-1]                       # 돌파 전날까지 10주 횡보, 상단 근처에서 마감
+    uni = pd.concat([uni, pd.DataFrame({"Ticker": ["000080"], "Name": ["횡보주"], "Market": "KOSPI",
+                                        "Sector": ["기계"], "Marcap": None, "Shares": None})])
+    res = screener.scan(cfg, store, "KR", uni, prices, index)
+    assert any(h["ticker"] == "000080" for h in res["hits"]["base"])
+    w = store.watch("KR")["000080"]
+    top = w["base_top"]
+    assert w["base_weeks"] == 10
+
+    monkeypatch.setattr(monitor, "session_fraction", lambda m, now=None: 0.5)
+
+    class P(FakeProvider):
+        def quotes(self, market, tickers, kr=None):
+            return {"000080": Quote(top * 1.01, top * 1.012, top * 0.99, volume=self.prices["vol"])}
+
+    tg = FakeTG()
+    run_intraday(cfg, store, tg, P({"vol": 1.0e6}), "KR")           # 하루 200만주 추정 → 3배 미달
+    assert not any("횡보 박스권 상단" in m for m in tg.sent)
+    run_intraday(cfg, store, tg, P({"vol": 2.0e6}), "KR")           # 하루 400만주 추정 → 3배 이상
+    msg = next(m for m in tg.sent if "횡보 박스권 상단" in m)
+    assert "돌파 가격(박스 상단)" in msg and msg.count("매수 타이밍") == 1
+
+    pos = {"market": "KR", "ticker": "000080", "name": "횡보주", "entry_price": top * 1.01, "qty": 90,
+           "adds_done": 0, "mode": "fixed", "stop": top, "take": top * 1.01 * 1.15}
+    assert check_position(cfg, pos, top * 0.999, w)[0][0] == "stop"   # 돌파 가격 아래로 → 즉시 매도

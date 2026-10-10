@@ -23,6 +23,7 @@ LABEL = {
     "surge_hold": "급등 후 절반 지지 확인중",
     "box_accum": "24개월 박스권+매집",
     "pullback": "주도주 눌림 방어중",
+    "base": "8~10주 횡보 박스권",
     "cycle": "사이클 바닥(PSR)",
     "position": "보유종목",
 }
@@ -119,6 +120,8 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     box_near: list[tuple[float, str, dict]] = []
     bx = _params(cfg, "box")
     pb = _params(cfg, "pullback")
+    bs = _params(cfg, "base")
+    base_near: list[tuple[float, str, dict]] = []
     pb_setup = {k: v for k, v in pb.items() if k not in ("breakout_vol_mult", "min_close_strength")}
 
     for t, df in tradable.items():
@@ -187,6 +190,17 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
                 st = S.pullback_setup_at(*arr, last, **{**pb_setup, "min_pullback_days": 1})
                 if st:
                     hits["pullback"][t] = st
+            if _on(cfg, "base") and len(df) > max(bs["min_len"], bs["vol_base"]):
+                bo = S.base_breakout(df.iloc[-(bs["max_len"] + bs["vol_base"] + 5):], **bs).iloc[-1]
+                if bo["signal"]:
+                    buy_signals.setdefault(t, []).append(f"{bs['min_len'] // 5}주+ 박스권 상단 돌파(거래량 {bs['vol_mult']:g}배↑)")
+                    stops[t] = float(bo["support"])
+                brg = S.base_range(df.iloc[-(bs["max_len"] + bs["vol_base"] + 5):], **bs).iloc[-1]
+                if brg["setup"]:
+                    dist = (brg["top"] - c) / brg["top"] * 100
+                    if dist <= bs.get("near_pct", 5):
+                        base_near.append((dist, t, {"top": float(brg["top"]), "bottom": float(brg["bottom"]),
+                                                    "avg_vol": float(brg["avg_vol"]), "weeks": S.base_weeks(df, **bs)}))
             levels[t] = _levels(df, ma_period, ep, xp)
         except Exception as e:
             log.debug("스캔 오류 %s: %s", t, e)
@@ -206,6 +220,8 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
             levels[pos["ticker"]] = _levels(df, ma_period, ep, xp)
     near.sort()
     box_near.sort(key=lambda x: x[0])
+    base_near.sort(key=lambda x: x[0])
+    hits["base"] = {t: d for _, t, d in base_near[: bs.get("near_watch_max", 40)]}
     hits["box_accum"] = {t: d for _, t, d in box_near[: bx.get("near_watch_max", 40)]}
     hits["high20_near"] = {t: {"high20": levels[t]["high20"], "dist_pct": d}
                            for d, t in near[: dc.get("near_watch_max", 60)]}
@@ -215,7 +231,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for strat, d in hits.items():
         for t in d:
             sources.setdefault(t, []).append(strat)
-    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10, "box_accum": 10, "pullback": 10}
+    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10, "box_accum": 10, "pullback": 10, "base": 10}
     ranked = sorted(sources, key=lambda t: (max(prio.get(s, 0) for s in sources[t]), len(sources[t])), reverse=True)
     watch = {}
     for t in ranked[: cfg["intraday"]["max_watch"]]:
@@ -236,6 +252,9 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
         if t in hits["pullback"] and hits["pullback"][t]["days"] + 1 >= pb.get("min_pullback_days", 5):
             p_ = hits["pullback"][t]
             w.update(pb_pivot=p_["pivot"], pb_defense=p_["defense"], pb_avg_vol=p_["avg_vol"])
+        if t in hits["base"]:
+            w.update(base_top=hits["base"][t]["top"], base_avg_vol=hits["base"][t]["avg_vol"],
+                     base_weeks=hits["base"][t]["weeks"])
         if t in hits["box_accum"]:
             b = hits["box_accum"][t]
             w.update(box_top=b["top"], box_fail=b["fail"], box_weight=b["weight"], box_ratio=b["ratio"])
@@ -248,7 +267,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
         src = [s for s in sources.get(t, []) if s != "position"]
         turtle = any("최고가 돌파" in s for s in sigs)
         standalone = turtle or t in stops or any("돌파 매수" in s for s in sigs)
-        src = [s for s in src if s not in ("high20_near", "surge_hold", "box_accum", "pullback")]
+        src = [s for s in src if s not in ("high20_near", "surge_hold", "box_accum", "pullback", "base")]
         if not (standalone or src):
             continue
         mode = "box" if t in box_breaks else "turtle" if turtle else "fixed"

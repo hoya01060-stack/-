@@ -150,7 +150,7 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
         L.append("⚠️ 위험회피 국면이므로 비중을 줄이거나 보류를 권장합니다.")
 
     L += ["", "<b>■ 관심종목 (기법별 포착)</b>"]
-    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "surge_hold", "box_accum", "pullback", "high20_near",
+    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "surge_hold", "box_accum", "pullback", "base", "high20_near",
                 "leaders", "cycle"):
         items = scan.get("hits", {}).get(key, [])
         if not items:
@@ -158,6 +158,8 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
         def extra(it):
             if key == "breakout_setup":
                 return f" 돌파가 {fmt_price(market, it['pivot'])}"
+            if key == "base":
+                return f" 상단 {fmt_price(market, it['top'])}({it['weeks']:.0f}주)"
             if key == "pullback":
                 return f" 고점 {fmt_price(market, it['pivot'])}/방어 {fmt_price(market, it['defense'])}(조정 {it['days']}일)"
             if key == "box_accum":
