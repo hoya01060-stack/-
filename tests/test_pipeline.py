@@ -230,3 +230,32 @@ def test_box_mode_low10_exit(tmp_path):
     assert [k for k, _, _ in check_position(cfg, pos, 11900, w)] == ["low10_break"]   # 상승 후 10일 최저가 이탈
     assert [k for k, _, _ in check_position(cfg, pos, 10600, w)] == ["stop"]          # 돌파 실패선이 먼저
     assert check_position(cfg, pos, 12500, w) == []
+
+
+def test_pullback_scan_and_intraday(tmp_path, monkeypatch):
+    from stockbot import monitor
+    from .test_strategies import _leader
+
+    cfg, store, uni, prices, index = setup(tmp_path)
+    ready = _leader().iloc[:-1].copy()                             # 돌파 전날까지 = 눌림 방어 상태
+    ready[["Open", "High", "Low", "Close"]] *= 100                 # 1,000원 이상 (유동성 필터 통과)
+    prices["000070"] = ready
+    uni = pd.concat([uni, pd.DataFrame({"Ticker": ["000070"], "Name": ["리더"], "Market": "KOSPI",
+                                        "Sector": ["반도체"], "Marcap": None, "Shares": None})])
+    res = screener.scan(cfg, store, "KR", uni, prices, index)
+    assert any(h["ticker"] == "000070" for h in res["hits"]["pullback"])
+    w = store.watch("KR")["000070"]
+    assert w["pb_pivot"] == pytest.approx(14140) and w["pb_defense"] == pytest.approx(12375)
+
+    monkeypatch.setattr(monitor, "session_fraction", lambda m, now=None: 0.5)
+    tg = FakeTG()
+
+    class P(FakeProvider):
+        def quotes(self, market, tickers, kr=None):
+            return {"000070": Quote(14300, 14350, 14100, volume=self.prices["vol"])}
+
+    run_intraday(cfg, store, tg, P({"vol": 5e5}), "KR")              # 반나절 50만주 → 하루 100만주 추정: 부족
+    assert not any("주도주 눌림(조정" in m for m in tg.sent)
+    run_intraday(cfg, store, tg, P({"vol": 1.5e6}), "KR")            # 하루 300만주 추정: 거래량 붙음
+    msg = next(m for m in tg.sent if "주도주 눌림(조정" in m)
+    assert "조정 최저가(방어선)" in msg and "stop=" in msg and msg.count("매수 타이밍") == 1

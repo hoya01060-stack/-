@@ -12,6 +12,16 @@ log = logging.getLogger(__name__)
 TZ = {"KR": ZoneInfo("Asia/Seoul"), "US": ZoneInfo("America/New_York")}
 
 
+SESSION = {"KR": (dtime(9, 0), dtime(15, 30)), "US": (dtime(9, 30), dtime(16, 0))}
+
+
+def session_fraction(market: str, now: datetime | None = None) -> float:
+    """정규장 경과 비율 (0~1). 장중 누적 거래량으로 하루 거래량을 추정할 때 사용."""
+    now = now or datetime.now(TZ[market])
+    o, c = (datetime.combine(now.date(), x, now.tzinfo) for x in SESSION[market])
+    return min(max((now - o) / (c - o), 0.0), 1.0)
+
+
 def near_close(cfg, market: str, now: datetime | None = None) -> bool:
     """장 마감 전 N분 이내인가 (급등 후 지지 3일째 '종가 매수' 알림용)."""
     now = now or datetime.now(TZ[market])
@@ -77,7 +87,8 @@ def check_position(cfg, pos: dict, price: float, w: dict | None) -> list[tuple[s
     return out
 
 
-def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_price=None, weight_pct=None) -> str:
+def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_price=None, weight_pct=None,
+                stop_label="상승분 절반 지지선") -> str:
     plan = S.plan_for(cfg, market, price, mode, w.get("low10"), stop_price=stop_price, weight_pct=weight_pct)
     from .screener import LABEL
 
@@ -94,7 +105,7 @@ def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_pri
         lines.append("손절 기준: 박스 상단 아래로 다시 빠지면 즉시 손절")
         lines.append(f"매도 규칙: {xp}일 최저가 이탈 시 전량 매도 → 등록: /buy {t} {num(price)} {plan.qty} box")
     elif stop_price:
-        lines.append(f"손절 기준: 상승분 절반 지지선 이탈 → 등록: /buy {t} {num(price)} {plan.qty} stop={num(plan.stop)}")
+        lines.append(f"손절 기준: {stop_label} 이탈 → 등록: /buy {t} {num(price)} {plan.qty} stop={num(plan.stop)}")
     if mode == "turtle":
         lines.append(f"매도 규칙: {cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도"
                      f" → 등록: /buy {t} {num(price)} {plan.qty} turtle")
@@ -157,6 +168,17 @@ def run_intraday(cfg, store, tg, provider, market: str) -> int:
         if w.get("pivot") and p > w["pivot"] and store.mark_alert(market, t, "breakout"):
             msgs.append(buy_message(cfg, market, t, w, p,
                                     f"급등 후 휴식 고점 {fmt_price(market, w['pivot'])} 돌파 (데이비드 헨)", regime))
+        if w.get("pb_pivot") and p > w["pb_pivot"]:
+            frac = max(session_fraction(market), 0.1)
+            need = cfg.strat("pullback").get("breakout_vol_mult", 1.5) * w.get("pb_avg_vol", 0)
+            proj = (q.volume or 0) / frac
+            if q.volume is not None and proj >= need and store.mark_alert(market, t, "pullback_break"):
+                msgs.append(buy_message(
+                    cfg, market, t, w, p,
+                    f"주도주 눌림(조정 중 거래량 급감·가격 방어) 후 이전 고점 {fmt_price(market, w['pb_pivot'])} 돌파"
+                    f" · 예상 거래량 평소의 {proj / max(w.get('pb_avg_vol', 1), 1):.1f}배",
+                    regime, stop_price=w.get("pb_defense"), stop_label="조정 최저가(방어선)"))
+                continue
         if w.get("box_top") and p > w["box_top"] and store.mark_alert(market, t, "box_break"):
             msgs.append(buy_message(cfg, market, t, w, p,
                                     f"24개월 박스권 상단 {fmt_price(market, w['box_top'])} 돌파 · 매집 거래량비 "

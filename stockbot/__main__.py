@@ -22,7 +22,7 @@ def main():
     ap.add_argument("--config", default=None)
     ap.add_argument("--no-send", action="store_true", help="텔레그램 대신 화면에 출력")
     ap.add_argument("--strategy", default="all",
-                    help="backtest: volume_dryup|price_defense|volume_surge_sideways|ma10|breakout|donchian|surge_hold|box|all")
+                    help="backtest: volume_dryup|price_defense|volume_surge_sideways|ma10|breakout|donchian|surge_hold|box|pullback|all")
     ap.add_argument("--limit", type=int, default=0, help="backtest: 종목 수 제한(0=전체)")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
@@ -59,7 +59,7 @@ def _backtest(cfg, app, a):
     prices = app.prices.update(a.market, uni)
     ucfg = cfg["universe"][a.market]
     prices = {t: df for t, df in prices.items() if D.liquid(df, ucfg["min_price"], ucfg["min_avg_value"])}
-    names = ["volume_dryup", "price_defense", "volume_surge_sideways", "ma10", "breakout", "donchian", "surge_hold", "box"] \
+    names = ["volume_dryup", "price_defense", "volume_surge_sideways", "ma10", "breakout", "donchian", "surge_hold", "box", "pullback"] \
         if a.strategy == "all" else [a.strategy]
     print(f"\n{a.market} 백테스트 · {len(prices)}종목 · 왕복비용 0.3% 차감 · 생존편향 있음(상장폐지 종목 제외)\n")
     print(f"{'전략':<24}{'청산':<8}{'거래수':>7}{'승률%':>8}{'평균%':>8}{'평균이익%':>10}{'평균손실%':>10}{'PF':>6}{'보유일':>7}")

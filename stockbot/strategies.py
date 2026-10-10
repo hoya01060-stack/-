@@ -257,6 +257,72 @@ def box_breakout(df: pd.DataFrame, **params) -> pd.DataFrame:
                          "ratio": prev["ratio"]})
 
 
+def pullback_setup_at(h, l, c, v, e: int, lookback=60, min_pullback_days=5, surge_window=15, surge_pct=30,
+                      surge_vol_mult=3.0, vol_base=50, dry_ratio=0.5, max_retrace=0.5, max_drawdown_pct=25,
+                      **_) -> dict | None:
+    """2-7 주도주 눌림 방어 (e일 종가 기준 → 다음 날 재돌파 감시용). numpy 배열을 받음.
+
+    ① 급등: 고점(p) 이전 surge_window일 최저 종가 대비 고점 고가 +surge_pct% 이상,
+            그 구간 최대 거래량 >= 급등 전 vol_base일 평균 x surge_vol_mult (거래량 폭발)
+    ② 조정: 고점 이후 min_pullback_days일 이상, 고점을 넘지 않음
+            조정 기간 평균 거래량 <= 급등 구간 평균 x dry_ratio (거래량 급감)
+            조정 최저가 >= 고점 - 상승폭 x max_retrace, 고점 대비 낙폭 <= max_drawdown_pct% (가격 방어)
+    반환: pivot(이전 고점), defense(조정 최저가), base, surge_vol, pullback_vol, days
+    """
+    start = max(e - lookback + 1, 0)
+    p = start + int(np.argmax(h[start:e + 1]))
+    days = e - p
+    if days < min_pullback_days or p == start:   # p == start 면 진짜 고점이 탐색기간 밖일 수 있음
+        return None
+    s0 = p - surge_window
+    if s0 - vol_base < 0:                        # 급등 전 평균 거래량을 계산할 데이터 부족
+        return None
+    base = float(np.min(c[s0:p]))
+    peak = float(h[p])
+    if base <= 0 or peak / base - 1 < surge_pct / 100:
+        return None
+    pre_vol = float(np.mean(v[s0 - vol_base:s0]))
+    run_vol = v[s0:p + 1]
+    if pre_vol <= 0 or float(np.max(run_vol)) < surge_vol_mult * pre_vol:
+        return None
+    pb_vol = float(np.mean(v[p + 1:e + 1]))
+    if pb_vol > dry_ratio * float(np.mean(run_vol)):
+        return None
+    low = float(np.min(l[p + 1:e + 1]))
+    if low < peak - (peak - base) * max_retrace or (peak - low) / peak > max_drawdown_pct / 100:
+        return None
+    return {"pivot": peak, "defense": low, "base": base, "surge_pct": (peak / base - 1) * 100,
+            "surge_vol": float(np.mean(run_vol)), "pullback_vol": pb_vol, "days": days,
+            "avg_vol": float(np.mean(v[e - vol_base + 1:e + 1]))}
+
+
+def pullback_signal_at(h, l, c, v, t: int, breakout_vol_mult=1.5, min_close_strength=0.5, **params) -> dict | None:
+    """2-7 매수 (t일 종가 기준): 어제까지 '급등 → 거래량 급감 조정 → 방어' 상태였고 오늘
+    종가가 이전 고점을 넘고, 거래량 >= 최근 평균 x breakout_vol_mult, 종가가 당일 범위 상단(강한 돌파)."""
+    if t < 1:
+        return None
+    st = pullback_setup_at(h, l, c, v, t - 1, **params)
+    if not st or c[t] <= st["pivot"]:
+        return None
+    rng = h[t] - l[t]
+    strength = (c[t] - l[t]) / rng if rng > 0 else 1.0
+    if v[t] >= breakout_vol_mult * st["avg_vol"] and strength >= min_close_strength:
+        return st
+    return None
+
+
+def pullback_breakout(df: pd.DataFrame, **params) -> pd.DataFrame:
+    """pullback_signal_at 을 모든 날짜에 적용 (백테스트용)."""
+    h, l, c, v = (df[k].to_numpy(float) for k in ("High", "Low", "Close", "Volume"))
+    n = len(df)
+    sig, sup = np.zeros(n, bool), np.full(n, np.nan)
+    for t in range(1, n):
+        st = pullback_signal_at(h, l, c, v, t, **params)
+        if st:
+            sig[t], sup[t] = True, st["defense"]
+    return pd.DataFrame({"signal": sig, "support": sup}, index=df.index)
+
+
 @dataclass
 class Resilience:
     excess_on_down_days: float   # 지수 하락일 평균 초과수익(%p)

@@ -22,6 +22,7 @@ LABEL = {
     "high20_near": "20일 신고가 임박(터틀)",
     "surge_hold": "급등 후 절반 지지 확인중",
     "box_accum": "24개월 박스권+매집",
+    "pullback": "주도주 눌림 방어중",
     "cycle": "사이클 바닥(PSR)",
     "position": "보유종목",
 }
@@ -117,6 +118,8 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     weights: dict[str, float] = {}        # 기법이 정한 계좌 비중 (박스권 돌파 10~20%)
     box_near: list[tuple[float, str, dict]] = []
     bx = _params(cfg, "box")
+    pb = _params(cfg, "pullback")
+    pb_setup = {k: v for k, v in pb.items() if k not in ("breakout_vol_mult", "min_close_strength")}
 
     for t, df in tradable.items():
         try:
@@ -174,6 +177,16 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
                         box_near.append((dist, t, {"top": float(br["top"]), "bottom": float(br["bottom"]),
                                                    "ratio": float(br["ratio"]), "fail": float(br["fail"]),
                                                    "weight": S.box_weight(float(br["ratio"]), **bx)}))
+            if _on(cfg, "pullback") and len(df) > pb["surge_window"] + pb["vol_base"] + 2:
+                arr = [df[k].to_numpy(float) for k in ("High", "Low", "Close", "Volume")]
+                last = len(df) - 1
+                sig_ = S.pullback_signal_at(*arr, last, **pb)
+                if sig_:
+                    buy_signals.setdefault(t, []).append("주도주 눌림 후 거래량 동반 고점 돌파")
+                    stops.setdefault(t, sig_["defense"])
+                st = S.pullback_setup_at(*arr, last, **{**pb_setup, "min_pullback_days": 1})
+                if st:
+                    hits["pullback"][t] = st
             levels[t] = _levels(df, ma_period, ep, xp)
         except Exception as e:
             log.debug("스캔 오류 %s: %s", t, e)
@@ -202,7 +215,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for strat, d in hits.items():
         for t in d:
             sources.setdefault(t, []).append(strat)
-    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10, "box_accum": 10}
+    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10, "box_accum": 10, "pullback": 10}
     ranked = sorted(sources, key=lambda t: (max(prio.get(s, 0) for s in sources[t]), len(sources[t])), reverse=True)
     watch = {}
     for t in ranked[: cfg["intraday"]["max_watch"]]:
@@ -220,6 +233,9 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
             w["surge_day"] = hits["surge_hold"][t]["day"]
             w["surge_close"] = hits["surge_hold"][t].get("surge_close")
             w["min_low_since"] = hits["surge_hold"][t].get("min_low")
+        if t in hits["pullback"] and hits["pullback"][t]["days"] + 1 >= pb.get("min_pullback_days", 5):
+            p_ = hits["pullback"][t]
+            w.update(pb_pivot=p_["pivot"], pb_defense=p_["defense"], pb_avg_vol=p_["avg_vol"])
         if t in hits["box_accum"]:
             b = hits["box_accum"][t]
             w.update(box_top=b["top"], box_fail=b["fail"], box_weight=b["weight"], box_ratio=b["ratio"])
@@ -232,7 +248,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
         src = [s for s in sources.get(t, []) if s != "position"]
         turtle = any("최고가 돌파" in s for s in sigs)
         standalone = turtle or t in stops or any("돌파 매수" in s for s in sigs)
-        src = [s for s in src if s not in ("high20_near", "surge_hold", "box_accum")]
+        src = [s for s in src if s not in ("high20_near", "surge_hold", "box_accum", "pullback")]
         if not (standalone or src):
             continue
         mode = "box" if t in box_breaks else "turtle" if turtle else "fixed"

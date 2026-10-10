@@ -246,3 +246,33 @@ def test_backtest_box_exit():
     df2["Open"] = df2["Close"]
     tr2 = B.simulate("X", df2, sig.reindex(df2.index).fillna(False), "box", cost_pct=0, stop_levels=lvl_hi)
     assert tr2[0].reason == "손절" and tr2[0].exit == pytest.approx(107)               # 돌파 실패 손절
+
+
+def _leader(pb_vol=5e5, pb_close=125, bo_vol=2.5e6, bo_close=145):
+    base = [100] * 60
+    surge = list(np.linspace(103, 140, 10))
+    pull = [136, 132, 129, 127, pb_close, 126, 128, 130]
+    close = base + surge + pull + [bo_close]
+    vol = [1e6] * 60 + [2e6] * 4 + [4e6] + [2e6] * 5 + [pb_vol] * len(pull) + [bo_vol]
+    df = make(close, vol)
+    df.iloc[-1, df.columns.get_loc("High")] = bo_close          # 고가 마감 = 강한 돌파
+    return df
+
+
+def _arr(df):
+    return [df[k].to_numpy(float) for k in ("High", "Low", "Close", "Volume")]
+
+
+def test_pullback_setup_and_breakout():
+    df = _leader()
+    st = S.pullback_setup_at(*_arr(df), len(df) - 2)
+    assert st and st["pivot"] == pytest.approx(140 * 1.01) and st["days"] == 8
+    assert st["defense"] == pytest.approx(125 * 0.99)
+    assert S.pullback_breakout(df)["signal"].iloc[-1]
+    assert S.pullback_breakout(df)["support"].iloc[-1] == pytest.approx(125 * 0.99)
+    assert not S.pullback_setup_at(*_arr(_leader(pb_vol=1.5e6)), len(df) - 2)    # 조정 중 거래량이 안 줄어듦
+    assert not S.pullback_setup_at(*_arr(_leader(pb_close=112)), len(df) - 2)    # 상승분 절반 이상 반납(방어 실패)
+    assert not S.pullback_breakout(_leader(bo_vol=1.2e6))["signal"].iloc[-1]     # 돌파일 거래량 부족
+    assert not S.pullback_breakout(_leader(bo_close=140))["signal"].iloc[-1]     # 이전 고점 못 넘음
+    flat = make([100] * 79, [1e6] * 79)
+    assert S.pullback_setup_at(*_arr(flat), 78) is None                           # 급등 없음
