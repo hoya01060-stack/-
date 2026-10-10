@@ -220,3 +220,13 @@ def test_buy_box_mode_uses_watch(tmp_path, monkeypatch):
     pos = app.store.positions()[0]
     assert pos["mode"] == "box" and pos["stop"] == 10670 and pos["qty"] == 180     # 계좌 20% = 200만원 / 11,100
     assert "돌파 실패" in out
+
+
+def test_box_mode_low10_exit(tmp_path):
+    cfg = load_config(tmp_path / "none.yaml")
+    w = {"low10": 12000, "box_fail": 10670}
+    pos = {"market": "KR", "ticker": "000050", "name": "박스A", "entry_price": 11100, "qty": 180, "adds_done": 0,
+           "mode": "box", "stop": 10670, "take": None}
+    assert [k for k, _, _ in check_position(cfg, pos, 11900, w)] == ["low10_break"]   # 상승 후 10일 최저가 이탈
+    assert [k for k, _, _ in check_position(cfg, pos, 10600, w)] == ["stop"]          # 돌파 실패선이 먼저
+    assert check_position(cfg, pos, 12500, w) == []

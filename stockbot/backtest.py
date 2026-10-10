@@ -53,7 +53,8 @@ def signal_series(name: str, df: pd.DataFrame, cfg) -> pd.Series:
 def simulate(ticker: str, df: pd.DataFrame, signal: pd.Series, exit_mode="fixed", stop_pct=5, take_pct=15,
              ma_period=10, max_hold=60, cost_pct=0.3, exit_period=10,
              stop_levels: pd.Series | None = None) -> list[Trade]:
-    """exit_mode: fixed(-stop/+take) | trend(-stop + 10일선 종가 이탈) | turtle(10일 최저가 이탈, 손절 겸용)"""
+    """exit_mode: fixed(-stop/+take) | trend(-stop + 10일선 종가 이탈) | turtle(10일 최저가 이탈, 손절 겸용)
+    | box(기법 손절가 + 10일 최저가 이탈, 익절 없음)"""
     o, h, l, c = (df[k].to_numpy(float) for k in ("Open", "High", "Low", "Close"))
     ma = df["Close"].rolling(ma_period).mean().to_numpy()
     low_exit = S.donchian_low(df, exit_period).to_numpy()
@@ -77,7 +78,8 @@ def simulate(ticker: str, df: pd.DataFrame, signal: pd.Series, exit_mode="fixed"
             stop = 0.0
         exit_px, reason, j = None, "", e
         for j in range(e, min(n, e + max_hold)):
-            if exit_mode == "turtle" and not np.isnan(low_exit[j]) and l[j] < low_exit[j]:
+            if exit_mode in ("turtle", "box") and not np.isnan(low_exit[j]) and l[j] < low_exit[j] \
+                    and low_exit[j] > stop:
                 exit_px, reason = min(o[j], low_exit[j]), f"{exit_period}일 최저가 이탈"
                 break
             if l[j] <= stop:

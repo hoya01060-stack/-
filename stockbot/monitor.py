@@ -51,7 +51,7 @@ def check_position(cfg, pos: dict, price: float, w: dict | None) -> list[tuple[s
         out.append(("stop", f"🔴 <b>손절 신호</b> {head}\n손절가 {fmt_price(m, pos['stop'])} 도달 → 무조건 매도\n"
                             f"(기법 손절가와 '계좌 {risk}% 손실 한도' 중 먼저 닿는 가격)", {}))
         return out
-    if pos["mode"] == "turtle" and w and w.get("low10") and price < w["low10"]:
+    if pos["mode"] in ("turtle", "box") and w and w.get("low10") and price < w["low10"]:
         xp = cfg.strat("donchian").get("exit_period", 10)
         out.append(("low10_break", f"🔴 <b>{xp}일 최저가 이탈 → 전량 매도</b> {head}\n"
                                    f"{xp}일 최저가 {fmt_price(m, w['low10'])} 붕괴 — 미련 없이 전부 매도", {}))
@@ -90,7 +90,9 @@ def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_pri
     num = (lambda x: f"{x:.0f}") if market == "KR" else (lambda x: f"{x:.2f}")
     if mode == "box":
         lines.append(f"비중: 계좌의 {plan.amount / cfg['capital'][market] * 100:.0f}% (매집 강도 반영, 10~20%)")
-        lines.append(f"손절 기준: 박스 상단 아래로 다시 빠지면 즉시 손절 → 등록: /buy {t} {num(price)} {plan.qty} box")
+        xp = cfg.strat("donchian").get("exit_period", 10)
+        lines.append("손절 기준: 박스 상단 아래로 다시 빠지면 즉시 손절")
+        lines.append(f"매도 규칙: {xp}일 최저가 이탈 시 전량 매도 → 등록: /buy {t} {num(price)} {plan.qty} box")
     elif stop_price:
         lines.append(f"손절 기준: 상승분 절반 지지선 이탈 → 등록: /buy {t} {num(price)} {plan.qty} stop={num(plan.stop)}")
     if mode == "turtle":

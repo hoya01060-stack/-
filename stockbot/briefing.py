@@ -142,7 +142,8 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
         stop_arg = (f"{r['stop']:.0f}" if market == "KR" else f"{r['stop']:.2f}") \
             if r.get("method_stop") and r.get("mode") != "box" else ""
         if r.get("mode") == "box":
-            exit_rule = f"계좌 {r['amount'] / cfg['capital'][market] * 100:.0f}% 투입 · 돌파 실패 시 즉시 손절"
+            exit_rule = (f"계좌 {r['amount'] / cfg['capital'][market] * 100:.0f}% 투입 · 돌파 실패 시 즉시 손절"
+                         f" · {cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도")
         how = f"/buy 모드 {r.get('mode', 'fixed')}" + (f" stop={stop_arg}" if stop_arg else "")
         L.append(f"   {r['qty']:,}주 · 손절 {fmt_price(market, r['stop'])}(계좌 -{r.get('risk_pct', 0):.1f}%) · {exit_rule} · {how}")
     if regime["state"] == "RISK_OFF" and recs:

@@ -154,6 +154,9 @@ class App:
             lines.append("10일선 이탈 시 매도 알림 + 상승 시 불타기 알림")
         if mode == "box":
             lines.append(f"박스 상단 아래로 빠지면(돌파 실패) 즉시 손절 알림 · 손실 한도 계좌 {risk}%")
+            xp = self.cfg.strat("donchian").get("exit_period", 10)
+            lines.append(f"{xp}일 최저가를 깨면 전량 매도 알림"
+                         + (f" (현재 기준 {fmt_price(m, w['low10'])})" if w.get("low10") else ""))
         if mode == "turtle":
             xp = self.cfg.strat("donchian").get("exit_period", 10)
             lines.append(f"{xp}일 최저가를 깨면 전량 매도 알림"
@@ -209,7 +212,8 @@ HELP = """<b>📈 주식 알림 봇 명령어</b>
    trend: -5% 손절 + 10일선 이탈 매도 + 불타기 알림
    turtle: 10일 최저가 이탈 시 전량 매도 (20일 신고가 돌파 매수용)
    cycle: 사이클주 목표가(최고 EPS x5) 도달 알림
-   box: 박스권 돌파 매수 — 돌파 실패(박스 상단 -3% 아래) 시 즉시 손절, 계좌 손실 2% 이내
+   box: 박스권 돌파 매수 — 돌파 실패(박스 상단 -3% 아래) 시 즉시 손절(계좌 손실 2% 이내)
+        + 10일 최저가 이탈 시 전량 매도
    stop=가격: 손절가 직접 지정 (예: 급등 후 절반 지지선)
    ※ 모든 모드: 계좌의 2%를 잃는 가격에 도달하면 무조건 손절 알림
    예) /buy 005930 72000 10   ·   /buy NVDA 120.5 5 trend

@@ -228,3 +228,21 @@ def test_box_position_sizing():
     # 손절폭이 넓으면(9,500) 비중 20%로는 3.5% 손실 → 2%가 되도록 수량 축소
     p2 = S.position_plan(11500, 10_000_000, 10, 5, None, stop_price=9500, account_risk_pct=2, weight_pct=20)
     assert p2.qty == 100 and p2.risk_pct <= 2.0
+
+
+def test_backtest_box_exit():
+    rise = [105, 112, 120, 128, 135, 140, 145, 150, 155, 160, 165, 170]
+    close = [100] * 30 + rise + [115]                          # 직전 10일 최저 120 → 115로 이탈
+    df = make(close, spread=0.0)
+    df["Open"] = df["Close"]
+    sig = pd.Series(False, index=df.index)
+    sig.iloc[30] = True                                         # 다음 날 시가 112 매수
+    lvl = pd.Series(97.0, index=df.index)                       # 돌파 실패선 (아래에 있어 미발동)
+    tr = B.simulate("X", df, sig, "box", cost_pct=0, stop_levels=lvl)
+    assert tr[0].reason == "10일 최저가 이탈" and tr[0].exit == pytest.approx(115)   # 갭하락이라 시가 청산
+    assert tr[0].ret_pct == pytest.approx((115 / 112 - 1) * 100)
+    lvl_hi = pd.Series(108.0, index=df.index)
+    df2 = make([100] * 30 + [105, 112, 107], spread=0.0)
+    df2["Open"] = df2["Close"]
+    tr2 = B.simulate("X", df2, sig.reindex(df2.index).fillna(False), "box", cost_pct=0, stop_levels=lvl_hi)
+    assert tr2[0].reason == "손절" and tr2[0].exit == pytest.approx(107)               # 돌파 실패 손절
