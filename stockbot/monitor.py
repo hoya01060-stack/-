@@ -41,6 +41,11 @@ def check_position(cfg, pos: dict, price: float, w: dict | None) -> list[tuple[s
     entry = pos["entry_price"]
     ret = (price / entry - 1) * 100
     head = f"<b>{esc(pos['name'])}</b>({pos['ticker']}) 현재 {fmt_price(m, price)} ({ret:+.1f}%)"
+    if pos["mode"] == "box" and pos["stop"] and price <= pos["stop"]:
+        loss = (entry - price) * (pos["qty"] or 0) / cfg["capital"][m] * 100
+        out.append(("stop", f"🔴 <b>박스권 돌파 실패 → 즉시 손절</b> {head}\n손절가 {fmt_price(m, pos['stop'])} 도달"
+                            f" (박스 상단 아래로 복귀) · 계좌 손실 약 -{loss:.1f}%", {}))
+        return out
     if pos["stop"] and price <= pos["stop"]:
         risk = cfg["risk"].get("account_risk_pct", 2)
         out.append(("stop", f"🔴 <b>손절 신호</b> {head}\n손절가 {fmt_price(m, pos['stop'])} 도달 → 무조건 매도\n"
@@ -72,8 +77,8 @@ def check_position(cfg, pos: dict, price: float, w: dict | None) -> list[tuple[s
     return out
 
 
-def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_price=None) -> str:
-    plan = S.plan_for(cfg, market, price, mode, w.get("low10"), stop_price=stop_price)
+def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_price=None, weight_pct=None) -> str:
+    plan = S.plan_for(cfg, market, price, mode, w.get("low10"), stop_price=stop_price, weight_pct=weight_pct)
     from .screener import LABEL
 
     src = ", ".join(LABEL.get(s, s) for s in w.get("sources", []))
@@ -83,7 +88,10 @@ def buy_message(cfg, market, t, w, price, reason, regime, mode="fixed", stop_pri
              + (f" · 익절 {fmt_price(market, plan.take)}" if plan.take else "")
              + f" · 손절 시 계좌 -{plan.risk_pct:.1f}%"]
     num = (lambda x: f"{x:.0f}") if market == "KR" else (lambda x: f"{x:.2f}")
-    if stop_price:
+    if mode == "box":
+        lines.append(f"비중: 계좌의 {plan.amount / cfg['capital'][market] * 100:.0f}% (매집 강도 반영, 10~20%)")
+        lines.append(f"손절 기준: 박스 상단 아래로 다시 빠지면 즉시 손절 → 등록: /buy {t} {num(price)} {plan.qty} box")
+    elif stop_price:
         lines.append(f"손절 기준: 상승분 절반 지지선 이탈 → 등록: /buy {t} {num(price)} {plan.qty} stop={num(plan.stop)}")
     if mode == "turtle":
         lines.append(f"매도 규칙: {cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도"
@@ -147,6 +155,12 @@ def run_intraday(cfg, store, tg, provider, market: str) -> int:
         if w.get("pivot") and p > w["pivot"] and store.mark_alert(market, t, "breakout"):
             msgs.append(buy_message(cfg, market, t, w, p,
                                     f"급등 후 휴식 고점 {fmt_price(market, w['pivot'])} 돌파 (데이비드 헨)", regime))
+        if w.get("box_top") and p > w["box_top"] and store.mark_alert(market, t, "box_break"):
+            msgs.append(buy_message(cfg, market, t, w, p,
+                                    f"24개월 박스권 상단 {fmt_price(market, w['box_top'])} 돌파 · 매집 거래량비 "
+                                    f"{w.get('box_ratio', 0):.2f}배", regime, mode="box",
+                                    stop_price=w.get("box_fail"), weight_pct=w.get("box_weight")))
+            continue        # 같은 종목의 다른 매수 알림(20일 신고가 등)은 중복이므로 생략
         if (cfg.strat("donchian").get("enabled", True) and w.get("high20") and p > w["high20"]
                 and store.mark_alert(market, t, "high20")):
             ep = cfg.strat("donchian").get("entry_period", 20)

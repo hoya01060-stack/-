@@ -139,14 +139,17 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
                  + (f" | 근거: {', '.join(r['sources'])}" if r["sources"] else ""))
         exit_rule = (f"익절 {fmt_price(market, r['take'])}" if r.get("take")
                      else f"{cfg.strat('donchian').get('exit_period', 10)}일 최저가 이탈 시 전량 매도")
-        stop_arg = (f"{r['stop']:.0f}" if market == "KR" else f"{r['stop']:.2f}") if r.get("method_stop") else ""
+        stop_arg = (f"{r['stop']:.0f}" if market == "KR" else f"{r['stop']:.2f}") \
+            if r.get("method_stop") and r.get("mode") != "box" else ""
+        if r.get("mode") == "box":
+            exit_rule = f"계좌 {r['amount'] / cfg['capital'][market] * 100:.0f}% 투입 · 돌파 실패 시 즉시 손절"
         how = f"/buy 모드 {r.get('mode', 'fixed')}" + (f" stop={stop_arg}" if stop_arg else "")
         L.append(f"   {r['qty']:,}주 · 손절 {fmt_price(market, r['stop'])}(계좌 -{r.get('risk_pct', 0):.1f}%) · {exit_rule} · {how}")
     if regime["state"] == "RISK_OFF" and recs:
         L.append("⚠️ 위험회피 국면이므로 비중을 줄이거나 보류를 권장합니다.")
 
     L += ["", "<b>■ 관심종목 (기법별 포착)</b>"]
-    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "surge_hold", "high20_near",
+    for key in ("volume_dryup", "price_defense", "volume_surge_sideways", "breakout_setup", "surge_hold", "box_accum", "high20_near",
                 "leaders", "cycle"):
         items = scan.get("hits", {}).get(key, [])
         if not items:
@@ -154,6 +157,8 @@ def build(cfg, store, market: str, scan: dict, idx: dict[str, pd.Series], stats:
         def extra(it):
             if key == "breakout_setup":
                 return f" 돌파가 {fmt_price(market, it['pivot'])}"
+            if key == "box_accum":
+                return f" 상단 {fmt_price(market, it['top'])}(거래량비 {it['ratio']:.1f})"
             if key == "surge_hold":
                 return f" 지지 {fmt_price(market, it['support'])}(D+{it['day']})"
             if key == "high20_near":

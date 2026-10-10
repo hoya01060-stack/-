@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import pandas as pd
 
 from stockbot import briefing, screener
@@ -175,3 +176,47 @@ def test_buy_with_explicit_stop(tmp_path, monkeypatch):
     pos = app.store.positions()[0]
     assert pos["stop"] == 11250 and "11,250원" in out
     assert "낮아야" in app.handle("/buy 000040 11900 stop=12000")
+
+
+def test_box_scan_intraday_and_stop(tmp_path):
+    from .test_strategies import _box
+
+    cfg, store, uni, prices, index = setup(tmp_path)
+    prices["000050"] = _box(last=10900)                       # 박스 상단(11,000) 근처, 아직 돌파 전
+    prices["000060"] = _box(last=11500)                       # 오늘 박스 돌파
+    idx = pd.Series(np.linspace(2500, 2700, 520), index=prices["000050"].index)
+    uni = pd.concat([uni, pd.DataFrame({"Ticker": ["000050", "000060"], "Name": ["박스A", "박스B"],
+                                        "Market": "KOSPI", "Sector": ["화학", "화학"], "Marcap": None, "Shares": None})])
+    res = screener.scan(cfg, store, "KR", uni, prices, idx)
+    rec = next(r for r in res["recommendations"] if r["ticker"] == "000060")
+    assert rec["mode"] == "box" and rec["amount"] / 10_000_000 == pytest.approx(0.2, abs=0.01)
+    assert rec["risk_pct"] <= 2.0
+    w = store.watch("KR")["000050"]
+    assert w["box_top"] == pytest.approx(11000, rel=1e-3) and 10 <= w["box_weight"] <= 20
+
+    tg = FakeTG()
+    run_intraday(cfg, store, tg, FakeProvider({"000050": 11100}), "KR")
+    msg = next(m for m in tg.sent if "박스권" in m)
+    assert msg.count("매수 타이밍") == 1                     # 박스 돌파와 20일 신고가 중복 알림 없음
+    assert "계좌의 2" in msg or "계좌의 1" in msg
+    assert "/buy 000050 11100" in msg and "box" in msg
+
+    pos = {"market": "KR", "ticker": "000050", "name": "박스A", "entry_price": 11100, "qty": 170, "adds_done": 0,
+           "mode": "box", "stop": 10670, "take": None}
+    out = check_position(cfg, pos, 10650, w)
+    assert out[0][0] == "stop" and "돌파 실패" in out[0][1]
+
+
+def test_buy_box_mode_uses_watch(tmp_path, monkeypatch):
+    from stockbot import app as A
+
+    cfg = load_config(tmp_path / "none.yaml")
+    cfg.raw["data_dir"] = str(tmp_path)
+    monkeypatch.setattr(A, "QuoteProvider", lambda c: FakeProvider({}))
+    app = A.App(cfg)
+    app.store.replace_watch("KR", {"000050": {"name": "박스A", "sources": ["box_accum"], "box_top": 11000,
+                                              "box_fail": 10670, "box_weight": 20, "box_ratio": 2.0}})
+    out = app.handle("/buy 000050 11100 box")
+    pos = app.store.positions()[0]
+    assert pos["mode"] == "box" and pos["stop"] == 10670 and pos["qty"] == 180     # 계좌 20% = 200만원 / 11,100
+    assert "돌파 실패" in out

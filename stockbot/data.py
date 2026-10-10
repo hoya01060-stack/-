@@ -132,7 +132,7 @@ def _fetch_yf_daily(symbols: list[str], start: date) -> dict[str, pd.DataFrame]:
 class PriceStore:
     """종목별 일봉을 pickle로 캐시하고, 실행 때마다 최근 구간만 추가로 받아 갱신."""
 
-    def __init__(self, data_dir: Path, history_days: int = 400):
+    def __init__(self, data_dir: Path, history_days: int = 800):
         self.dir = Path(data_dir) / "prices"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.history_days = history_days
@@ -151,12 +151,14 @@ class PriceStore:
         df[df.index >= cutoff].to_pickle(self._path(market, ticker))
 
     def _start_for(self, old: pd.DataFrame | None) -> date:
-        if old is None or old.empty:
-            return date.today() - timedelta(days=int(self.history_days * 1.5))
+        full = date.today() - timedelta(days=int(self.history_days * 1.5))
+        # 캐시가 없거나, 보관기간을 늘려서 과거 데이터가 모자라면 처음부터 다시 받음
+        if old is None or old.empty or old.index[0].date() > full + timedelta(days=60):
+            return full
         return (old.index[-1] - timedelta(days=7)).date()
 
     def _merge(self, old, new):
-        if old is None or old.empty:
+        if old is None or old.empty or (new is not None and not new.empty and new.index[0] <= old.index[0]):
             return new
         if new is None or new.empty:
             return old

@@ -21,6 +21,7 @@ LABEL = {
     "breakout_setup": "급등 후 휴식(헨)",
     "high20_near": "20일 신고가 임박(터틀)",
     "surge_hold": "급등 후 절반 지지 확인중",
+    "box_accum": "24개월 박스권+매집",
     "cycle": "사이클 바닥(PSR)",
     "position": "보유종목",
 }
@@ -111,7 +112,11 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     dc = cfg.strat("donchian")
     ep, xp = dc.get("entry_period", 20), dc.get("exit_period", 10)
     near: list[tuple[float, str]] = []
-    stops: dict[str, float] = {}          # 기법이 정한 손절가 (급등 후 절반 지지선)
+    box_breaks: set[str] = set()
+    stops: dict[str, float] = {}          # 기법이 정한 손절가 (급등 후 절반 지지선, 박스 돌파 실패선)
+    weights: dict[str, float] = {}        # 기법이 정한 계좌 비중 (박스권 돌파 10~20%)
+    box_near: list[tuple[float, str, dict]] = []
+    bx = _params(cfg, "box")
 
     for t, df in tradable.items():
         try:
@@ -154,6 +159,21 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
                     prog = S.surge_hold_progress(df, **sp)
                     if prog:
                         hits["surge_hold"][t] = prog
+            if _on(cfg, "box") and len(df) > bx["lookback"]:
+                bb = S.box_breakout(df, **bx)
+                if bb["signal"].iloc[-1]:
+                    ratio = float(bb["ratio"].iloc[-1])
+                    buy_signals.setdefault(t, []).append("24개월 박스권 상단 돌파(매집 확인)")
+                    stops[t] = float(bb["support"].iloc[-1])
+                    weights[t] = S.box_weight(ratio, **bx)
+                    box_breaks.add(t)
+                br = S.box_range(df, **bx).iloc[-1]
+                if br["setup"]:
+                    dist = (br["top"] - c) / br["top"] * 100
+                    if dist <= bx.get("near_pct", 10):
+                        box_near.append((dist, t, {"top": float(br["top"]), "bottom": float(br["bottom"]),
+                                                   "ratio": float(br["ratio"]), "fail": float(br["fail"]),
+                                                   "weight": S.box_weight(float(br["ratio"]), **bx)}))
             levels[t] = _levels(df, ma_period, ep, xp)
         except Exception as e:
             log.debug("스캔 오류 %s: %s", t, e)
@@ -172,6 +192,8 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
         if df is not None and len(df) and pos["ticker"] not in levels:
             levels[pos["ticker"]] = _levels(df, ma_period, ep, xp)
     near.sort()
+    box_near.sort(key=lambda x: x[0])
+    hits["box_accum"] = {t: d for _, t, d in box_near[: bx.get("near_watch_max", 40)]}
     hits["high20_near"] = {t: {"high20": levels[t]["high20"], "dist_pct": d}
                            for d, t in near[: dc.get("near_watch_max", 60)]}
 
@@ -180,7 +202,7 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
     for strat, d in hits.items():
         for t in d:
             sources.setdefault(t, []).append(strat)
-    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10}
+    prio = {"position": 100, "breakout_setup": 10, "surge_hold": 10, "box_accum": 10}
     ranked = sorted(sources, key=lambda t: (max(prio.get(s, 0) for s in sources[t]), len(sources[t])), reverse=True)
     watch = {}
     for t in ranked[: cfg["intraday"]["max_watch"]]:
@@ -198,6 +220,9 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
             w["surge_day"] = hits["surge_hold"][t]["day"]
             w["surge_close"] = hits["surge_hold"][t].get("surge_close")
             w["min_low_since"] = hits["surge_hold"][t].get("min_low")
+        if t in hits["box_accum"]:
+            b = hits["box_accum"][t]
+            w.update(box_top=b["top"], box_fail=b["fail"], box_weight=b["weight"], box_ratio=b["ratio"])
         watch[t] = w
     store.replace_watch(market, watch)
 
@@ -207,11 +232,12 @@ def scan(cfg, store, market: str, universe: pd.DataFrame, prices: dict[str, pd.D
         src = [s for s in sources.get(t, []) if s != "position"]
         turtle = any("최고가 돌파" in s for s in sigs)
         standalone = turtle or t in stops or any("돌파 매수" in s for s in sigs)
-        src = [s for s in src if s not in ("high20_near", "surge_hold")]
+        src = [s for s in src if s not in ("high20_near", "surge_hold", "box_accum")]
         if not (standalone or src):
             continue
-        mode = "turtle" if turtle else "fixed"
-        plan = S.plan_for(cfg, market, levels[t]["close"], mode, levels[t]["low10"], stop_price=stops.get(t))
+        mode = "box" if t in box_breaks else "turtle" if turtle else "fixed"
+        plan = S.plan_for(cfg, market, levels[t]["close"], mode, levels[t]["low10"], stop_price=stops.get(t),
+                          weight_pct=weights.get(t))
         df = tradable[t]
         vol_ratio = float(df["Volume"].iloc[-1] / max(df["Volume"].iloc[-21:-1].mean(), 1))
         recs.append({"ticker": t, "name": names.get(t, t), "signals": sigs, "mode": mode,

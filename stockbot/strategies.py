@@ -209,6 +209,54 @@ def surge_hold_progress(df: pd.DataFrame, surge_pct=20, surge_vol_mult=2.0, hold
     return None
 
 
+def updown_volume_ratio(df: pd.DataFrame, window=120) -> pd.Series:
+    """오른 날 평균 거래량 / 내린 날 평균 거래량 (window일). 1보다 클수록 '오를 때 터지고 내릴 때 죽는' 패턴."""
+    c, v = df["Close"], df["Volume"]
+    chg = c.diff()
+    up, dn = (chg > 0).astype(float), (chg < 0).astype(float)
+    up_avg = (v * up).rolling(window).sum() / up.rolling(window).sum().replace(0, np.nan)
+    dn_avg = (v * dn).rolling(window).sum() / dn.rolling(window).sum().replace(0, np.nan)
+    return up_avg / dn_avg
+
+
+def box_weight(ratio: float, min_ratio=1.3, strong_ratio=2.0, weight_min_pct=10, weight_max_pct=20, **_) -> float:
+    """매집 강도(거래량 비율)에 따라 계좌 비중 10%~20% 사이로 결정."""
+    if ratio != ratio or ratio <= min_ratio:
+        return float(weight_min_pct)
+    if ratio >= strong_ratio:
+        return float(weight_max_pct)
+    return weight_min_pct + (weight_max_pct - weight_min_pct) * (ratio - min_ratio) / (strong_ratio - min_ratio)
+
+
+def box_range(df: pd.DataFrame, lookback=480, max_range_pct=50, max_net_change_pct=15, accum_window=120,
+              min_ratio=1.3, fail_buffer_pct=3, **_) -> pd.DataFrame:
+    """2-6 24개월 박스권 + 세력 매집 (해당 날짜 종가까지 기준 → 다음 날 돌파 감시용).
+
+    - 박스: 최근 lookback 거래일(약 24개월) 종가 최고/최저 (꼬리 제외 위해 종가 사용)
+    - 횡보: 최고/최저 폭 <= max_range_pct% 이고, 시작 대비 현재 등락 <= max_net_change_pct%
+    - 매집: 최근 accum_window일 '오른 날 평균 거래량 / 내린 날 평균 거래량' >= min_ratio
+    - 돌파 실패선 = 박스 상단 x (1 - fail_buffer_pct%)
+    """
+    c = df["Close"]
+    top = c.rolling(lookback, min_periods=lookback).max()
+    bottom = c.rolling(lookback, min_periods=lookback).min()
+    net = (c / c.shift(lookback - 1) - 1).abs()
+    ratio = updown_volume_ratio(df, accum_window)
+    ok = ((top / bottom - 1 <= max_range_pct / 100) & (net <= max_net_change_pct / 100)
+          & (ratio >= min_ratio)).fillna(False)
+    return pd.DataFrame({"setup": ok, "top": top, "bottom": bottom, "ratio": ratio,
+                         "fail": top * (1 - fail_buffer_pct / 100)})
+
+
+def box_breakout(df: pd.DataFrame, **params) -> pd.DataFrame:
+    """2-6 매수: 어제까지 박스권+매집이었고 오늘 종가가 박스 상단을 돌파. stop=돌파 실패선."""
+    b = box_range(df, **params)
+    prev = b.shift(1)
+    sig = (prev["setup"].fillna(False).astype(bool) & (df["Close"] > prev["top"])).fillna(False)
+    return pd.DataFrame({"signal": sig, "support": prev["fail"].where(sig), "top": prev["top"],
+                         "ratio": prev["ratio"]})
+
+
 @dataclass
 class Resilience:
     excess_on_down_days: float   # 지수 하락일 평균 초과수익(%p)
@@ -322,7 +370,7 @@ def account_stop(entry: float, qty: float, capital: float, account_risk_pct=2) -
 
 
 def position_plan(price: float, capital: float, max_positions: int, stop_loss_pct=5, take_profit_pct=15,
-                  stop_price: float | None = None, account_risk_pct=2) -> PositionPlan:
+                  stop_price: float | None = None, account_risk_pct=2, weight_pct: float | None = None) -> PositionPlan:
     """4-1 동일비중 매수 + 기계적 손절/익절, 4-3 계좌 2% 손실 한도.
 
     수량 = min(동일비중 수량, 계좌의 account_risk_pct% / 1주당 손절폭)
@@ -331,7 +379,8 @@ def position_plan(price: float, capital: float, max_positions: int, stop_loss_pc
     take_profit_pct=None 이면 익절가 없음.
     """
     stop = stop_price if stop_price is not None else price * (1 - stop_loss_pct / 100)
-    qty = int((capital / max(max_positions, 1)) // price) if price > 0 else 0
+    amount = capital * weight_pct / 100 if weight_pct else capital / max(max_positions, 1)
+    qty = int(amount // price) if price > 0 else 0
     per_share = price - stop
     if per_share > 0:
         qty = min(qty, int(capital * account_risk_pct / 100 // per_share))
@@ -343,16 +392,16 @@ def position_plan(price: float, capital: float, max_positions: int, stop_loss_pc
 
 
 def plan_for(cfg, market: str, price: float, mode: str = "fixed", exit_low: float | None = None,
-             stop_price: float | None = None) -> PositionPlan:
+             stop_price: float | None = None, weight_pct: float | None = None) -> PositionPlan:
     """설정값으로 매수 계획 산출. mode=turtle 이면 손절=10일 최저가, 익절 없음.
     stop_price 를 주면(예: 급등 후 절반 지지선) 그 가격을 기법 손절가로 사용."""
     r = cfg["risk"]
     if stop_price is None or stop_price >= price:
         stop_price = exit_low if mode == "turtle" and exit_low is not None and exit_low < price else None
+    risk = cfg.strat("box")["max_account_loss_pct"] if mode == "box" else r.get("account_risk_pct", 2)
     return position_plan(price, cfg["capital"][market], cfg["max_positions"], r["stop_loss_pct"],
-                         None if mode in ("turtle", "trend", "cycle") else r["take_profit_pct"],
-                         stop_price=stop_price,
-                         account_risk_pct=r.get("account_risk_pct", 2))
+                         None if mode in ("turtle", "trend", "cycle", "box") else r["take_profit_pct"],
+                         stop_price=stop_price, account_risk_pct=risk, weight_pct=weight_pct)
 
 
 def market_regime(index_close: pd.Series, crash_drawdown_pct=15) -> dict:

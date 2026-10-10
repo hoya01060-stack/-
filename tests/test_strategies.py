@@ -194,3 +194,37 @@ def test_surge_hold_progress_and_backtest_stop():
     res = S.surge_hold(df)
     tr = B.simulate("X", df, res["signal"], "fixed", cost_pct=0, stop_levels=res["support"])
     assert tr[0].reason == "손절" and tr[0].exit == pytest.approx(111)          # 지지선 112.5 이탈, 갭하락이라 시가 청산
+
+
+def _box(n=520, accumulate=True, last=None):
+    i = np.arange(n)
+    close = 10000 + 1000 * np.sin(2 * np.pi * i / 40)
+    if last is not None:
+        close[-1] = last
+    up = np.r_[False, np.diff(close) > 0]
+    vol = np.where(up, 2e6, 1e6) if accumulate else np.full(n, 1e6)
+    return make(close, vol)
+
+
+def test_box_range_and_breakout():
+    df = _box(last=11500)
+    br = S.box_range(df).iloc[-2]
+    assert br["setup"] and br["top"] == pytest.approx(11000, rel=1e-3)
+    assert br["ratio"] == pytest.approx(2.0, rel=0.05)
+    bb = S.box_breakout(df)
+    assert bb["signal"].iloc[-1] and not bb["signal"].iloc[-2]
+    assert bb["support"].iloc[-1] == pytest.approx(br["top"] * 0.97)
+    assert S.box_weight(float(bb["ratio"].iloc[-1])) == pytest.approx(20, abs=0.5)
+    assert S.box_weight(1.0) == 10 and S.box_weight(1.65) == pytest.approx(15)
+    assert not S.box_range(_box(accumulate=False)).iloc[-1]["setup"]          # 매집 패턴 없음
+    trend = make(np.linspace(5000, 11000, 520), np.where(np.arange(520) % 2, 2e6, 1e6))
+    assert not S.box_range(trend).iloc[-1]["setup"]                            # 2년간 2배 상승 = 박스 아님
+
+
+def test_box_position_sizing():
+    # 계좌 1,000만원 · 비중 20% · 매수 11,500 · 손절(돌파실패선) 10,670 → 계좌 손실 약 1.4% (2% 이내)
+    p = S.position_plan(11500, 10_000_000, 10, 5, None, stop_price=10670, account_risk_pct=2, weight_pct=20)
+    assert p.qty == 173 and p.stop == 10670 and p.risk_pct == pytest.approx(1.44, abs=0.01)
+    # 손절폭이 넓으면(9,500) 비중 20%로는 3.5% 손실 → 2%가 되도록 수량 축소
+    p2 = S.position_plan(11500, 10_000_000, 10, 5, None, stop_price=9500, account_risk_pct=2, weight_pct=20)
+    assert p2.qty == 100 and p2.risk_pct <= 2.0

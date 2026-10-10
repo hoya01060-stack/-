@@ -34,7 +34,7 @@ class App:
         self.cfg = cfg
         self.store = Store(cfg.data_dir / "stockbot.db")
         self.tg = Telegram(cfg.secrets.telegram_token, cfg.secrets.telegram_chat_id)
-        self.prices = D.PriceStore(cfg.data_dir, cfg.get("history_days", 400))
+        self.prices = D.PriceStore(cfg.data_dir, cfg.get("history_days", 800))
         self.provider = QuoteProvider(cfg)
         self._lock = threading.Lock()   # 무거운 작업 동시 실행 방지
 
@@ -115,9 +115,9 @@ class App:
         return "알 수 없는 명령입니다. /help"
 
     def _buy(self, args) -> str:
-        modes = ("fixed", "trend", "turtle", "cycle")
+        modes = ("fixed", "trend", "turtle", "cycle", "box")
         if len(args) < 2:
-            return "사용법: /buy 종목코드 매수가 [수량] [fixed|trend|turtle|cycle] [stop=손절가]"
+            return "사용법: /buy 종목코드 매수가 [수량] [fixed|trend|turtle|cycle|box] [stop=손절가]"
         t, price = args[0].upper(), float(args[1].replace(",", ""))
         m = market_of(t)
         mode = next((a for a in args[2:] if a in modes), self.cfg["risk"]["default_exit_mode"])
@@ -128,13 +128,18 @@ class App:
             return "손절가는 매수가보다 낮아야 합니다."
         w = self.store.watch(m).get(t, {})
         name = w.get("name") or t
-        plan = S.plan_for(self.cfg, m, price, mode, w.get("low10"), stop_price=explicit)
+        if mode == "box" and explicit is None and w.get("box_fail") and w["box_fail"] < price:
+            explicit = w["box_fail"]                                    # 박스 돌파 실패선
+        plan = S.plan_for(self.cfg, m, price, mode, w.get("low10"), stop_price=explicit,
+                          weight_pct=w.get("box_weight") if mode == "box" else None)
         qty = float(nums[0].replace(",", "")) if nums else plan.qty
         if qty <= 0:
             return "수량이 0입니다. /buy 종목 매수가 수량 으로 직접 입력하세요."
         capital, risk = self.cfg["capital"][m], self.cfg["risk"].get("account_risk_pct", 2)
+        if mode == "box":
+            risk = self.cfg.strat("box")["max_account_loss_pct"]
         hard = S.account_stop(price, qty, capital, risk)             # 계좌 2% 손실 가격
-        method_stop = price * (1 - self.cfg["risk"]["stop_loss_pct"] / 100) if mode in ("fixed", "trend") else 0
+        method_stop = price * (1 - self.cfg["risk"]["stop_loss_pct"] / 100) if mode in ("fixed", "trend", "box") else 0
         if explicit is not None:
             method_stop = explicit
         stop = max(method_stop, hard)
@@ -147,6 +152,8 @@ class App:
             lines.append(f"⚠️ 수량이 많아 '계좌 {risk}% 손실 한도'가 기법 손절가보다 먼저 옵니다.")
         if mode == "trend":
             lines.append("10일선 이탈 시 매도 알림 + 상승 시 불타기 알림")
+        if mode == "box":
+            lines.append(f"박스 상단 아래로 빠지면(돌파 실패) 즉시 손절 알림 · 손실 한도 계좌 {risk}%")
         if mode == "turtle":
             xp = self.cfg.strat("donchian").get("exit_period", 10)
             lines.append(f"{xp}일 최저가를 깨면 전량 매도 알림"
@@ -202,6 +209,7 @@ HELP = """<b>📈 주식 알림 봇 명령어</b>
    trend: -5% 손절 + 10일선 이탈 매도 + 불타기 알림
    turtle: 10일 최저가 이탈 시 전량 매도 (20일 신고가 돌파 매수용)
    cycle: 사이클주 목표가(최고 EPS x5) 도달 알림
+   box: 박스권 돌파 매수 — 돌파 실패(박스 상단 -3% 아래) 시 즉시 손절, 계좌 손실 2% 이내
    stop=가격: 손절가 직접 지정 (예: 급등 후 절반 지지선)
    ※ 모든 모드: 계좌의 2%를 잃는 가격에 도달하면 무조건 손절 알림
    예) /buy 005930 72000 10   ·   /buy NVDA 120.5 5 trend
