@@ -1,0 +1,1056 @@
+<title>펫버스 무지개 공원</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&family=Gowun+Batang:wght@400;700&display=swap">
+<style>
+/* Layout: 전체 화면 3D 공원 위에 떠 있는 HUD(좌상단 펫 카드 · 우상단 메뉴 · 하단 행동 바) + 모달 */
+:root {
+  --night: #1c2040;
+  --panel: rgba(27, 31, 60, 0.86);
+  --panel-solid: #232850;
+  --line: rgba(255, 246, 232, 0.16);
+  --cream: #fff6e8;
+  --muted: #c9c3dc;
+  --peach: #ffb38a;
+  --lilac: #b9a6ff;
+  --mint: #8fe3c4;
+  --danger: #ff8a8a;
+  --font-display: "Jua", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-body: "Gowun Dodum", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-letter: "Gowun Batang", "Nanum Myeongjo", serif;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; overflow: hidden; background: var(--night); color: var(--cream); font-family: var(--font-body); font-size: 15px; -webkit-tap-highlight-color: transparent; }
+#stage { position: fixed; inset: 0; touch-action: none; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--peach); outline-offset: 2px; }
+
+.hud { position: fixed; z-index: 5; }
+#petcard { top: calc(env(safe-area-inset-top, 0px) + 12px); left: calc(env(safe-area-inset-left, 0px) + 12px); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px 14px; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: center; max-width: min(300px, calc(100vw - 24px)); backdrop-filter: blur(8px); }
+#petcard .dot { grid-row: span 3; width: 42px; height: 42px; border-radius: 50%; border: 3px solid var(--cream); }
+#petcard .name { font-family: var(--font-display); font-size: 20px; line-height: 1.1; }
+#petcard .sub { color: var(--muted); font-size: 12.5px; }
+.bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--peach), var(--mint)); transition: width .4s; }
+#petcard.star .bar > i { background: linear-gradient(90deg, var(--lilac), #fff); }
+
+#menu { top: calc(env(safe-area-inset-top, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 12px); display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; backdrop-filter: blur(8px); white-space: nowrap; }
+.chip:hover { border-color: var(--peach); }
+.chip.bridge { border-color: rgba(185,166,255,.5); color: #e4dcff; }
+
+#actions { left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); display: flex; gap: 8px; background: var(--panel); border: 1px solid var(--line); padding: 8px; border-radius: 20px; backdrop-filter: blur(8px); max-width: calc(100vw - 24px); }
+.act { display: grid; justify-items: center; gap: 2px; min-width: 64px; padding: 8px 10px; border-radius: 14px; border: 0; background: rgba(255,255,255,.06); font-size: 13px; }
+.act:hover { background: rgba(255,179,138,.18); }
+.act svg { width: 26px; height: 26px; }
+#hint { left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); font-size: 12.5px; color: var(--cream); opacity: .8; text-shadow: 0 1px 3px rgba(0,0,0,.6); white-space: nowrap; pointer-events: none; }
+
+#sample { top: calc(env(safe-area-inset-top, 0px) + 92px); left: calc(env(safe-area-inset-left, 0px) + 12px); background: var(--panel); backdrop-filter: blur(8px); border: 1px dashed var(--peach); color: var(--cream); padding: 6px 12px; border-radius: 12px; font-size: 12.5px; max-width: min(300px, calc(100vw - 24px)); }
+#sample button { background: none; border: 0; color: var(--peach); text-decoration: underline; padding: 0; }
+
+#toast { left: 50%; top: calc(env(safe-area-inset-top, 0px) + 16px); transform: translate(-50%, -8px); background: var(--panel-solid); border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px; opacity: 0; transition: .3s; pointer-events: none; z-index: 30; max-width: calc(100vw - 32px); text-align: center; }
+#toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* modal */
+.modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(12, 12, 30, .55); padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.sheet { background: var(--panel-solid); border: 1px solid var(--line); border-radius: 22px; width: min(560px, 100%); max-height: 100%; overflow: auto; padding: 22px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+.sheet h2 { font-family: var(--font-display); font-weight: 400; font-size: 24px; margin: 0; text-wrap: balance; }
+.sheet .lead { color: var(--muted); margin: -6px 0 0; line-height: 1.55; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row.end { justify-content: flex-end; }
+.btn { border: 1px solid var(--line); background: rgba(255,255,255,.07); padding: 10px 16px; border-radius: 12px; }
+.btn.primary { background: var(--peach); border-color: var(--peach); color: #3a2116; font-weight: 700; }
+.btn.lilac { background: var(--lilac); border-color: var(--lilac); color: #231a4a; font-weight: 700; }
+.btn.ghost { background: none; }
+.btn.danger { color: var(--danger); border-color: rgba(255,138,138,.4); background: none; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+label.field { display: grid; gap: 6px; font-size: 13.5px; color: var(--muted); }
+input[type=text], input[type=date], select, textarea { font: inherit; color: var(--cream); background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
+textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+input[type=color] { width: 54px; height: 40px; border: 1px solid var(--line); border-radius: 10px; background: none; padding: 2px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { #petcard { max-width: calc(100vw - 190px); padding: 8px 10px; } #petcard .dot { width: 32px; height: 32px; } #petcard .name { font-size: 17px; } .chip { font-size: 13px; padding: 7px 11px; } #sample { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 98px); left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); width: max-content; text-align: center; } #hint { display: none; } #actions { width: calc(100vw - 24px); box-sizing: border-box; } .act { flex: 1; min-width: 0; white-space: nowrap; } }
+@media (max-width: 460px) { .grid2 { grid-template-columns: 1fr; } .act { min-width: 54px; padding: 8px 6px; font-size: 12px; } }
+
+.memory-media { border-radius: 16px; overflow: hidden; background: #111327; display: grid; place-items: center; aspect-ratio: 4 / 3; max-width: 100%; }
+.memory-media img, .memory-media video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.memory-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+.memory-meta b { color: var(--cream); font-weight: 400; font-size: 15px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); line-height: 1.6; border: 1px dashed var(--line); border-radius: 14px; }
+
+.album { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.album .item { display: grid; gap: 6px; }
+.album .thumb { aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #111327; position: relative; max-width: 100%; }
+.album .thumb img, .album .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.album .badge { position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.55); padding: 2px 7px; border-radius: 6px; font-size: 11px; }
+.album .del { position: absolute; right: 6px; top: 6px; background: rgba(0,0,0,.55); border: 0; border-radius: 8px; padding: 2px 8px; font-size: 12px; }
+.album input { padding: 6px 8px; font-size: 12.5px; }
+.upload { display: grid; place-items: center; gap: 4px; border: 2px dashed rgba(255,179,138,.5); border-radius: 14px; padding: 18px; text-align: center; color: var(--muted); cursor: pointer; }
+.upload strong { color: var(--peach); font-weight: 400; font-family: var(--font-display); font-size: 18px; }
+.upload input { display: none; }
+.note { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+
+.petlist { display: grid; gap: 8px; }
+.petrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.04); text-align: left; width: 100%; }
+.petrow.cur { border-color: var(--peach); }
+.petrow .dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--cream); flex: none; }
+.petrow span { flex: 1; min-width: 0; }
+.petrow small { color: var(--muted); }
+
+/* ceremony */
+#ceremony { left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); width: min(560px, calc(100vw - 24px)); background: rgba(24, 20, 52, .9); border: 1px solid rgba(185,166,255,.35); border-radius: 20px; padding: 16px 18px; display: grid; gap: 12px; backdrop-filter: blur(8px); box-sizing: border-box; }
+#ceremony .step { font-size: 12px; letter-spacing: .08em; color: var(--lilac); }
+#ceremony p { margin: 0; font-family: var(--font-letter); font-size: 17px; line-height: 1.6; text-wrap: balance; }
+#letterView { font-family: var(--font-letter); font-size: 17px; line-height: 1.9; white-space: pre-wrap; background: rgba(255,246,232,.05); border-radius: 14px; padding: 18px; border: 1px solid var(--line); }
+
+.guest { display: grid; gap: 10px; }
+.guest .msg { padding: 12px 14px; border-radius: 12px; background: rgba(185,166,255,.08); border: 1px solid rgba(185,166,255,.2); font-family: var(--font-letter); line-height: 1.7; white-space: pre-wrap; }
+.guest .msg small { display: block; font-family: var(--font-body); color: var(--muted); margin-top: 4px; }
+.anniv { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.anniv b { color: var(--cream); font-variant-numeric: tabular-nums; font-weight: 400; font-family: var(--font-display); font-size: 18px; }
+
+#loading { position: fixed; inset: 0; display: grid; place-items: center; z-index: 40; background: var(--night); font-family: var(--font-display); font-size: 22px; color: var(--cream); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="stage" aria-label="반려동물과 함께 노는 3D 공원"></div>
+<div id="loading">공원 문을 여는 중…</div>
+
+<div class="hud" id="petcard" hidden>
+  <div class="dot" id="pc-dot"></div>
+  <div class="name" id="pc-name"></div>
+  <div class="sub" id="pc-sub"></div>
+  <div class="bar" title="행복도"><i id="pc-bar" style="width:50%"></i></div>
+</div>
+<div class="hud" id="sample" hidden>지금 보이는 ‘콩이’와 사진은 예시예요. <button id="sample-go">내 반려동물 등록하기</button></div>
+
+<nav class="hud" id="menu" hidden>
+  <button class="chip" id="b-memory">오늘의 추억</button>
+  <button class="chip" id="b-album">추억 앨범</button>
+  <button class="chip" id="b-pets">내 반려동물</button>
+  <button class="chip" id="b-garden">추모 정원 가기</button>
+  <button class="chip bridge" id="b-bridge">무지개다리 추모식</button>
+  <button class="chip bridge" id="b-guest" hidden>추모 방명록</button>
+</nav>
+
+<div class="hud" id="hint" hidden>화면을 탭하면 그 자리로 걸어가요 · 키보드는 WASD/방향키</div>
+<div class="hud" id="actions" hidden>
+  <button class="act" id="a-ball"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M5 9c4 1 10 1 14 0M5 15c4-1 10-1 14 0"/></svg>공 던지기</button>
+  <button class="act" id="a-treat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 9a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 2.4 1.8h5.2A2.5 2.5 0 1 1 17 9a2.5 2.5 0 1 1-2.4 3.2H9.4A2.5 2.5 0 1 1 7 9z" transform="translate(0 4)"/></svg>간식 주기</button>
+  <button class="act" id="a-pet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>쓰다듬기</button>
+  <button class="act" id="a-sit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 20h12M8 20v-6l4-3 4 3v6M12 11V6"/><circle cx="12" cy="4.5" r="1.5"/></svg>앉아</button>
+</div>
+
+<section class="hud" id="ceremony" hidden aria-live="polite">
+  <div class="step" id="cer-step"></div>
+  <p id="cer-text"></p>
+  <div class="row end" id="cer-btns"></div>
+</section>
+
+<div class="hud" id="toast" role="status"></div>
+
+<!-- 오늘의 추억 -->
+<div class="modal" id="m-memory" hidden>
+  <div class="sheet">
+    <h2 id="mem-title">오늘의 추억</h2>
+    <div id="mem-body"></div>
+    <div class="row end">
+      <button class="btn" id="mem-next">다른 추억 보기</button>
+      <button class="btn primary" data-close>공원으로 들어가기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 앨범 -->
+<div class="modal" id="m-album" hidden>
+  <div class="sheet">
+    <h2 id="alb-title">추억 앨범</h2>
+    <p class="lead">올린 사진과 영상은 접속할 때마다 무작위로 ‘오늘의 추억’에 나오고, 공원 곳곳의 액자에도 걸려요.</p>
+    <label class="upload" for="alb-file">
+      <strong>사진 · 영상 올리기</strong>
+      <span>여러 장을 한 번에 고를 수 있어요 (JPG, PNG, HEIC 미리보기는 브라우저에 따라 다름 · MP4/MOV)</span>
+      <input type="file" id="alb-file" accept="image/*,video/*" multiple>
+    </label>
+    <div class="album" id="alb-grid"></div>
+    <p class="note">지금 프로토타입은 파일을 이 기기의 브라우저 저장소(IndexedDB)에만 보관해요. 브라우저 데이터를 지우면 함께 사라지고, 다른 기기와는 동기화되지 않아요.</p>
+    <div class="row end"><button class="btn primary" data-close>닫기</button></div>
+  </div>
+</div>
+
+<!-- 반려동물 -->
+<div class="modal" id="m-pets" hidden>
+  <div class="sheet">
+    <h2>내 반려동물</h2>
+    <div class="petlist" id="pet-list"></div>
+    <h2 id="pet-form-title" style="font-size:19px">새 반려동물 등록</h2>
+    <form id="pet-form" class="grid2">
+      <label class="field">이름<input type="text" id="pf-name" maxlength="20" placeholder="예: 보리" required></label>
+      <label class="field">종류
+        <select id="pf-species"><option value="dog">강아지</option><option value="cat">고양이</option><option value="rabbit">토끼</option></select>
+      </label>
+      <label class="field">털 색<input type="color" id="pf-color" value="#e0a96d"></label>
+      <label class="field">생일 (또는 가족이 된 날)<input type="date" id="pf-birth"></label>
+      <div class="row end" style="grid-column:1/-1">
+        <button type="button" class="btn ghost" data-close>닫기</button>
+        <button type="submit" class="btn primary" id="pf-submit">등록하고 공원에 데려가기</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 무지개다리 준비 -->
+<div class="modal" id="m-bridge" hidden>
+  <div class="sheet">
+    <h2 id="br-title">무지개다리 추모식</h2>
+    <p class="lead" id="br-lead"></p>
+    <div class="grid2">
+      <label class="field">떠난 날<input type="date" id="br-date"></label>
+      <label class="field">추모비에 새길 한 줄<input type="text" id="br-epitaph" maxlength="30" placeholder="예: 우리 집 막내, 영원히 사랑해"></label>
+    </div>
+    <label class="field">마지막 편지 (추모식 중에 읽어요)<textarea id="br-letter" maxlength="2000" placeholder="함께해서 고마웠던 순간들을 적어 주세요."></textarea></label>
+    <div class="row end" id="br-step1">
+      <button class="btn ghost" data-close>나중에 할게요</button>
+      <button class="btn lilac" id="br-next">추모식 준비하기</button>
+    </div>
+    <div class="row end" id="br-step2" hidden>
+      <span class="note" style="flex:1;min-width:200px">추모식을 마치면 이 아이는 ‘별이 된 친구’로 바뀌고, 추모 정원에 추모비가 세워져요. 공원에서는 빛나는 모습으로 계속 함께 걸을 수 있어요.</span>
+      <button class="btn ghost" id="br-back">다시 쓸게요</button>
+      <button class="btn lilac" id="br-start">추모식 시작</button>
+    </div>
+  </div>
+</div>
+
+<!-- 편지 -->
+<div class="modal" id="m-letter" hidden>
+  <div class="sheet">
+    <h2 id="lt-title"></h2>
+    <div id="letterView"></div>
+    <div class="row end"><button class="btn lilac" data-close>편지를 접어 두기</button></div>
+  </div>
+</div>
+
+<!-- 방명록 -->
+<div class="modal" id="m-guest" hidden>
+  <div class="sheet">
+    <h2 id="gb-title">추모 방명록</h2>
+    <div class="anniv" id="gb-anniv"></div>
+    <label class="field">남기고 싶은 말<textarea id="gb-text" maxlength="1000" placeholder="오늘 보고 싶었던 마음을 남겨 주세요."></textarea></label>
+    <div class="row end">
+      <button class="btn" id="gb-flower">꽃 한 송이 올리기</button>
+      <button class="btn lilac" id="gb-save">남기기</button>
+    </div>
+    <div class="guest" id="gb-list"></div>
+    <p class="note">방명록은 현재 이 기기에만 저장돼요. 가족·친구가 함께 쓰는 공유 방명록은 서버를 붙이는 다음 단계에서 가능해요.</p>
+    <div class="row end"><button class="btn" data-close>닫기</button></div>
+  </div>
+</div>
+
+<!-- 미디어 보기 -->
+<div class="modal" id="m-view" hidden>
+  <div class="sheet">
+    <div id="view-body"></div>
+    <div class="row end"><button class="btn primary" data-close>닫기</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = (s) => document.querySelector(s);
+const SPECIES = { dog: "강아지", cat: "고양이", rabbit: "토끼" };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const pd = (s) => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s)) ? new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) : new Date(s);
+const fmtDate = (d) => { if (!d) return ""; const x = pd(d); if (isNaN(x)) return ""; return `${x.getFullYear()}.${String(x.getMonth()+1).padStart(2,"0")}.${String(x.getDate()).padStart(2,"0")}`; };
+const daysBetween = (a, b) => Math.round((pd(b).setHours(0,0,0,0) - pd(a).setHours(0,0,0,0)) / 86400000);
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const ls = { get(k){ try { return localStorage.getItem(k); } catch(e) { return null; } }, set(k,v){ try { localStorage.setItem(k,v); } catch(e) {} } };
+
+/* ---------------- 저장소 (IndexedDB, 실패 시 메모리) ---------------- */
+const store = (() => {
+  const mem = { pets: [], media: [], notes: [] };
+  let dbp = null;
+  function open() {
+    if (dbp) return dbp;
+    dbp = new Promise((res) => {
+      try {
+        const r = indexedDB.open("petverse", 1);
+        r.onupgradeneeded = () => { const d = r.result; ["pets","media","notes"].forEach(n => { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: "id" }); }); };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => res(null);
+        r.onblocked = () => res(null);
+      } catch (e) { res(null); }
+    });
+    return dbp;
+  }
+  async function all(n) {
+    const d = await open();
+    if (!d) return mem[n].slice();
+    return new Promise((res) => { try { const r = d.transaction(n).objectStore(n).getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); } catch (e) { res(mem[n].slice()); } });
+  }
+  async function put(n, o) {
+    const d = await open();
+    const memPut = () => { const i = mem[n].findIndex(x => x.id === o.id); if (i >= 0) mem[n][i] = o; else mem[n].push(o); };
+    if (!d) return memPut();
+    return new Promise((res) => { try { const t = d.transaction(n, "readwrite"); t.objectStore(n).put(o); t.oncomplete = () => res(true); t.onerror = () => { memPut(); res(false); }; t.onabort = () => { memPut(); res(false); }; } catch (e) { memPut(); res(false); } });
+  }
+  async function del(n, id) {
+    const d = await open();
+    mem[n] = mem[n].filter(x => x.id !== id);
+    if (!d) return;
+    return new Promise((res) => { try { const t = d.transaction(n, "readwrite"); t.objectStore(n).delete(id); t.oncomplete = () => res(); t.onerror = () => res(); } catch (e) { res(); } });
+  }
+  return { all, put, del };
+})();
+
+let pets = [], media = [], notes = [], cur = null;
+const urls = new Map(); // media id -> object URL
+function urlFor(m) { if (!urls.has(m.id)) urls.set(m.id, URL.createObjectURL(m.blob)); return urls.get(m.id); }
+const curMedia = () => media.filter(m => m.petId === (cur && cur.id));
+
+/* ---------------- UI 기본 ---------------- */
+function toast(msg, ms = 2600) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("on"), ms); }
+function openModal(id) { document.querySelectorAll(".modal").forEach(m => { if (m.id !== id) m.hidden = true; }); $("#" + id).hidden = false; }
+function closeModal(el) { const m = el.closest ? el.closest(".modal") : el; if (m) { m.hidden = true; m.querySelectorAll("video").forEach(v => v.pause()); } }
+document.addEventListener("click", (e) => { const c = e.target.closest("[data-close]"); if (c) closeModal(c); else if (e.target.classList && e.target.classList.contains("modal")) closeModal(e.target); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.querySelectorAll(".modal").forEach(m => { if (!m.hidden) closeModal(m); }); });
+
+/* ---------------- 3D 기본 ---------------- */
+const stage = $("#stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const DAY = new THREE.Color(0xbfe4f0), DUSK = new THREE.Color(0x2b2754);
+scene.background = DAY.clone();
+scene.fog = new THREE.Fog(DAY.clone(), 35, 95);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 300);
+const hemi = new THREE.HemisphereLight(0xfff3df, 0x5f8a55, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffe2b8, 0.95);
+sun.position.set(18, 30, 12); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 90 });
+scene.add(sun); scene.add(sun.target);
+
+function resize() { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+window.addEventListener("resize", resize); resize();
+
+// 색상은 sRGB 16진수로 쓰고, 렌더러 출력(sRGB)과 맞도록 선형 공간으로 변환
+const std = (color, extra) => { const m = new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.9 }, extra || {})); m.color.convertSRGBToLinear(); return m; };
+const basic = (opts) => { const m = new THREE.MeshBasicMaterial(opts); if (!opts.map) m.color.convertSRGBToLinear(); return m; };
+function canvasTex(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t; }
+
+// 땅 · 길 · 나무 · 꽃
+const ground = new THREE.Mesh(new THREE.CircleGeometry(62, 72), std(0x93c983));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const plaza = new THREE.Mesh(new THREE.CircleGeometry(5, 48), std(0xe9d9b6));
+plaza.rotation.x = -Math.PI / 2; plaza.position.y = 0.01; plaza.receiveShadow = true; scene.add(plaza);
+const path = new THREE.Mesh(new THREE.PlaneGeometry(3, 24), std(0xe9d9b6));
+path.rotation.x = -Math.PI / 2; path.position.set(0, 0.012, -16); path.receiveShadow = true; scene.add(path);
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+const treeMatT = std(0x8a6247), treeMatL = [std(0x6fb36a), std(0x86c47a), std(0x5ea56b)];
+for (let i = 0; i < 46; i++) {
+  const a = rand(0, Math.PI * 2), r = rand(19, 52);
+  const x = Math.sin(a) * r, z = Math.cos(a) * r;
+  if (Math.abs(x) < 9 && z < -14 && z > -52) continue; // 추모 정원 쪽은 비워 둠
+  const t = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.6, 8), treeMatT); trunk.position.y = 0.8;
+  const s = rand(0.9, 1.6);
+  const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 0), treeMatL[i % 3]); leaf.position.y = 2.4; leaf.scale.set(s, s * 1.15, s);
+  trunk.castShadow = leaf.castShadow = true;
+  t.add(trunk, leaf); t.position.set(x, 0, z); t.rotation.y = rand(0, 6); scene.add(t);
+}
+const flowerCols = [0xffffff, 0xffc8dd, 0xffe28a, 0xc8b6ff];
+const flowerGeo = new THREE.SphereGeometry(0.09, 6, 4);
+for (let i = 0; i < 160; i++) {
+  const a = rand(0, Math.PI * 2), r = rand(6, 45);
+  const f = new THREE.Mesh(flowerGeo, std(flowerCols[i % 4]));
+  f.position.set(Math.sin(a) * r, 0.08, Math.cos(a) * r); scene.add(f);
+}
+
+// 추모 정원
+const GARDEN = new THREE.Vector3(0, 0, -34);
+const gPlaza = new THREE.Mesh(new THREE.CircleGeometry(9, 56), std(0xd9d2e6));
+gPlaza.rotation.x = -Math.PI / 2; gPlaza.position.set(GARDEN.x, 0.015, GARDEN.z); gPlaza.receiveShadow = true; scene.add(gPlaza);
+const hedgeMat = std(0x4f8f61);
+for (let i = 0; i < 20; i++) {
+  const a = Math.PI * 0.62 + (i / 19) * Math.PI * 0.76 + Math.PI * 0.0;
+  const h = new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 8), hedgeMat);
+  h.position.set(GARDEN.x + Math.sin(a) * 10.5, 0.5, GARDEN.z + Math.cos(a) * 10.5); h.scale.y = 0.8; h.castShadow = true; scene.add(h);
+}
+const gardenSign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshBasicMaterial({ map: canvasTex(512, 128, (g, w, h) => { g.fillStyle = "#3a335f"; g.fillRect(0, 0, w, h); g.fillStyle = "#fff6e8"; g.font = "54px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("별빛 추모 정원", w / 2, h / 2 + 2); }) }));
+gardenSign.position.set(2.6, 1.6, -24.5); scene.add(gardenSign);
+const signPost = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.6, 6), treeMatT); signPost.position.set(2.6, 0.8, -24.55); scene.add(signPost);
+
+// 무지개
+const RAINBOW_C = new THREE.Vector3(0, 0, -43), RAINBOW_R = 7.2;
+const rainbow = new THREE.Group(); rainbow.position.copy(RAINBOW_C);
+[0xff6b6b, 0xffa94d, 0xffe066, 0x8ce99a, 0x74c0fc, 0x748ffc, 0xb197fc].forEach((c, i) => {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(RAINBOW_R - i * 0.42, 0.2, 8, 72, Math.PI), basic({ color: c, transparent: true, opacity: 0, depthWrite: false }));
+  rainbow.add(m);
+});
+scene.add(rainbow);
+let rainbowTarget = 0;
+const RB_MID = RAINBOW_R - 3 * 0.42;
+
+// 별 텍스처
+const starTex = canvasTex(128, 128, (g, w) => { const gr = g.createRadialGradient(w/2, w/2, 0, w/2, w/2, w/2); gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(0.2, "rgba(255,244,214,.95)"); gr.addColorStop(0.5, "rgba(200,180,255,.35)"); gr.addColorStop(1, "rgba(200,180,255,0)"); g.fillStyle = gr; g.fillRect(0, 0, w, w); });
+const heartTex = canvasTex(64, 64, (g) => { g.fillStyle = "#ff7aa2"; g.beginPath(); g.moveTo(32, 56); g.bezierCurveTo(4, 36, 6, 10, 22, 10); g.bezierCurveTo(28, 10, 32, 16, 32, 20); g.bezierCurveTo(32, 16, 36, 10, 42, 10); g.bezierCurveTo(58, 10, 60, 36, 32, 56); g.fill(); });
+
+/* ---------------- 플레이어 ---------------- */
+const player = new THREE.Group();
+(() => {
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.9, 14), std(0x6f7fe6)); body.position.y = 0.95;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 16, 12), std(0xffd9b8)); head.position.y = 1.62;
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.285, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), std(0x4a3426)); hair.position.y = 1.65; hair.rotation.x = -0.25;
+  const legs = [-0.13, 0.13].map(x => { const p = new THREE.Group(); p.position.set(x, 0.52, 0); const l = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.52, 8), std(0x3b3f5c)); l.position.y = -0.26; l.castShadow = true; p.add(l); player.add(p); return p; });
+  body.castShadow = head.castShadow = true;
+  player.add(body, head, hair);
+  player.userData.legs = legs;
+})();
+player.position.set(0, 0, 5);
+scene.add(player);
+
+/* ---------------- 반려동물 모델 ---------------- */
+function buildPet(sp, color) {
+  const g = new THREE.Group();
+  const c = new THREE.Color(color);
+  const mat = std(c.getHex(), { roughness: 0.85 });
+  const light = std(c.clone().lerp(new THREE.Color(0xffffff), 0.5).getHex());
+  const dark = std(0x2b2230, { roughness: 0.4 });
+  const S = { dog: { body: [0.36, 0.3, 0.55], head: 0.27, leg: 0.3 }, cat: { body: [0.28, 0.26, 0.5], head: 0.24, leg: 0.27 }, rabbit: { body: [0.34, 0.33, 0.4], head: 0.24, leg: 0.14 } }[sp] || { body: [0.36, 0.3, 0.55], head: 0.27, leg: 0.3 };
+  const inner = new THREE.Group(); g.add(inner);
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 16), mat);
+  body.scale.set(...S.body); body.position.y = S.leg + S.body[1] * 0.8; inner.add(body);
+  const headG = new THREE.Group(); headG.position.set(0, body.position.y + S.body[1] * 0.8, S.body[2] * 0.8); inner.add(headG);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(S.head, 20, 16), mat); headG.add(head);
+  [-1, 1].forEach(s => { const e = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), dark); e.position.set(s * S.head * 0.42, S.head * 0.2, S.head * 0.86); headG.add(e); });
+  if (sp === "dog") {
+    const snout = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), light); snout.scale.set(0.14, 0.11, 0.15); snout.position.set(0, -S.head * 0.25, S.head * 0.85); headG.add(snout);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), dark); nose.position.set(0, -S.head * 0.15, S.head * 1.38); headG.add(nose);
+  } else {
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), std(0xff9fb3)); nose.position.set(0, -S.head * 0.08, S.head * 0.98); headG.add(nose);
+  }
+  const ears = [];
+  [-1, 1].forEach(s => {
+    let e;
+    if (sp === "dog") { e = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mat.clone()); e.material.color.multiplyScalar(0.8); e.scale.set(0.08, 0.17, 0.05); e.position.set(s * S.head * 0.92, S.head * 0.05, 0); e.rotation.z = s * 0.25; }
+    else if (sp === "cat") { e = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.17, 4), mat); e.position.set(s * S.head * 0.55, S.head * 0.95, -0.02); e.rotation.z = -s * 0.2; }
+    else { e = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mat); e.scale.set(0.055, 0.26, 0.04); e.position.set(s * S.head * 0.35, S.head * 1.55, -0.03); e.rotation.z = -s * 0.12; }
+    e.castShadow = true; headG.add(e); ears.push(e);
+  });
+  const tail = new THREE.Group(); tail.position.set(0, body.position.y + S.body[1] * 0.3, -S.body[2] * 0.92); inner.add(tail);
+  if (sp === "rabbit") { const t = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), light); tail.add(t); }
+  else { const len = sp === "cat" ? 0.55 : 0.32; const t = new THREE.Mesh(new THREE.CylinderGeometry(0.035, sp === "cat" ? 0.04 : 0.06, len, 8), mat); t.position.y = len / 2; t.castShadow = true; tail.add(t); tail.rotation.x = sp === "cat" ? -0.5 : -0.9; }
+  const legs = [];
+  [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(([sx, sz]) => {
+    const p = new THREE.Group(); p.position.set(sx * S.body[0] * 0.55, S.leg, sz * S.body[2] * 0.55);
+    const l = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, S.leg + 0.04, 8), mat); l.position.y = -S.leg / 2; l.castShadow = true; p.add(l);
+    inner.add(p); legs.push(p);
+  });
+  body.castShadow = head.castShadow = true;
+  const mats = []; g.traverse(o => { if (o.material && !mats.includes(o.material)) mats.push(o.material); });
+  return { group: g, inner, body, headG, tail, legs, ears, mats, sp, headZ: S.body[2] * 0.8 + S.head };
+}
+
+let petObj = null;
+const P = { state: "follow", t: 0, jump: 0, sitT: 0, idleLook: 0, wag: 1, spirit: false, fade: 1 };
+function spawnPet() {
+  if (petObj) { scene.remove(petObj.group); petObj.mats.forEach(m => m.dispose()); }
+  if (!cur) { petObj = null; return; }
+  petObj = buildPet(cur.species, cur.color);
+  petObj.group.position.copy(player.position).add(new THREE.Vector3(1.2, 0, -0.6));
+  scene.add(petObj.group);
+  P.state = "follow"; P.spirit = cur.status === "star"; P.fade = 1;
+  applySpirit();
+  ball.visible = false; ballFlight = null; ballHeld = false;
+}
+function applySpirit() {
+  if (!petObj) return;
+  petObj.mats.forEach(m => {
+    m.transparent = P.spirit || P.fade < 1;
+    m.opacity = (P.spirit ? 0.62 : 1) * P.fade;
+    m.depthWrite = !m.transparent;
+    if (m.emissive) { m.emissive.set(P.spirit ? 0x8f7cff : 0x000000); m.emissiveIntensity = P.spirit ? 0.55 : 0; }
+  });
+  petObj.group.traverse(o => { if (o.isMesh) o.castShadow = !P.spirit; });
+}
+
+/* ---------------- 공 · 하트 · 별 ---------------- */
+const ball = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 10), std(0xff6b5a, { roughness: 0.5 }));
+ball.castShadow = true; ball.visible = false; scene.add(ball);
+let ballFlight = null, ballHeld = false;
+const hearts = [];
+function spawnHearts(pos, n = 5) {
+  for (let i = 0; i < n; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: heartTex, transparent: true, depthWrite: false }));
+    s.position.copy(pos).add(new THREE.Vector3(rand(-0.4, 0.4), rand(0.6, 1.0), rand(-0.4, 0.4)));
+    s.scale.setScalar(rand(0.25, 0.4)); s.userData = { life: 0, vy: rand(0.6, 1.1), delay: i * 0.08 };
+    scene.add(s); hearts.push(s);
+  }
+}
+const starSprites = new Map(); // petId -> sprite
+function starPosFor(i) { return new THREE.Vector3(-8 + (i % 5) * 4 + (i % 2) * 1.2, 15 + (i % 3) * 1.6, -50 - Math.floor(i / 5) * 3); }
+function addStar(petId, pos) {
+  if (starSprites.has(petId)) return starSprites.get(petId);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex, transparent: true, depthWrite: false, fog: false }));
+  s.position.copy(pos); s.scale.setScalar(2.4); s.userData.phase = Math.random() * 6; scene.add(s); starSprites.set(petId, s); return s;
+}
+
+/* ---------------- 추모비 ---------------- */
+const stones = new Map(); // petId -> group
+function stoneSlot(i) { return new THREE.Vector3(GARDEN.x + ((i % 5) - 2) * 3.3, 0, GARDEN.z - 3 - Math.floor(i / 5) * 3); }
+function stoneTexture(p) {
+  return canvasTex(512, 384, (g, w, h) => {
+    g.fillStyle = "#e9e4f3"; g.fillRect(0, 0, w, h);
+    g.fillStyle = "#3a335f"; g.textAlign = "center";
+    g.font = "bold 70px serif"; g.fillText(p.name, w / 2, 120);
+    g.font = "34px serif"; g.fillText(`${fmtDate(p.birth) || "?"}  –  ${fmtDate(p.passed)}`, w / 2, 190);
+    g.font = "30px serif"; g.fillStyle = "#5a4f8a";
+    const ep = p.epitaph || `사랑하는 ${p.name}, 별이 되어 빛나길`;
+    g.fillText(ep.length > 18 ? ep.slice(0, 18) : ep, w / 2, 262);
+    if (ep.length > 18) g.fillText(ep.slice(18, 36), w / 2, 304);
+  });
+}
+function buildStone(p, slot) {
+  const grp = new THREE.Group(); grp.position.copy(slot);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.4, 0.32), std(0xb9b2cc, { roughness: 0.7 })); slab.position.y = 0.85; slab.castShadow = true;
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.32, 32), slab.material); top.rotation.x = Math.PI / 2; top.position.y = 1.55; top.castShadow = true;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.18, 0.8), std(0x9a93ae)); base.position.y = 0.09; base.receiveShadow = true;
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.35), new THREE.MeshBasicMaterial({ map: stoneTexture(p) })); face.position.set(0, 0.9, 0.165);
+  face.userData.stonePet = p.id; slab.userData.stonePet = p.id;
+  grp.add(slab, top, base, face);
+  const candles = [-0.75, 0.75].map(x => {
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.3, 10), std(0xfff6e8)); c.position.set(x, 0.33, 0.55);
+    const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), basic({ color: 0xffc46b })); fl.scale.y = 1.6; fl.position.set(x, 0.55, 0.55); fl.visible = false;
+    grp.add(c, fl); return fl;
+  });
+  const light = new THREE.PointLight(0xffb36b, 0, 6); light.position.set(0, 0.8, 0.9); grp.add(light);
+  grp.userData = { candles, light, flowers: [], pet: p.id };
+  scene.add(grp);
+  return grp;
+}
+function lightCandles(grp, on = true) { grp.userData.candles.forEach(f => f.visible = on); grp.userData.light.intensity = on ? 1.1 : 0; }
+function addFlowerTo(grp) {
+  const i = grp.userData.flowers.length; if (i >= 14) return;
+  const col = [0xffffff, 0xffc8dd, 0xffe28a, 0xc8b6ff, 0xff9aa2][i % 5];
+  const f = new THREE.Group();
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 4), std(0x4f8f61)); stem.position.y = 0.15;
+  const bloom = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), std(col)); bloom.position.y = 0.32;
+  f.add(stem, bloom);
+  f.position.set(-0.9 + (i % 7) * 0.3, 0.18, 0.75 + Math.floor(i / 7) * 0.22); f.rotation.z = rand(-0.3, 0.3);
+  grp.add(f); grp.userData.flowers.push(f);
+}
+function rebuildStones() {
+  stones.forEach(g => scene.remove(g)); stones.clear();
+  starSprites.forEach(s => scene.remove(s)); starSprites.clear();
+  pets.filter(p => p.status === "star").sort((a, b) => (a.passedAt || 0) - (b.passedAt || 0)).forEach((p, i) => {
+    const g = buildStone(p, stoneSlot(i)); lightCandles(g, true);
+    for (let k = 0; k < Math.min(p.flowers || 0, 14); k++) addFlowerTo(g);
+    stones.set(p.id, g);
+    addStar(p.id, starPosFor(i));
+  });
+  rainbowTarget = pets.some(p => p.status === "star") ? 0.45 : 0.18;
+}
+
+/* ---------------- 공원 액자 ---------------- */
+const frames = [];
+const FRAME_ANGLES = [25, 70, 118, 242, 290, 335];
+const placeholderTex = canvasTex(512, 384, (g, w, h) => { g.fillStyle = "#f4ead8"; g.fillRect(0, 0, w, h); g.fillStyle = "#8a6f5a"; g.textAlign = "center"; g.font = "34px sans-serif"; g.fillText("추억 앨범에", w / 2, h / 2 - 14); g.fillText("사진을 올려 주세요", w / 2, h / 2 + 30); });
+FRAME_ANGLES.forEach((deg) => {
+  const a = deg * Math.PI / 180, R = 13;
+  const grp = new THREE.Group(); grp.position.set(Math.sin(a) * R, 0, Math.cos(a) * R); grp.lookAt(0, 0, 0);
+  const wood = std(0x9b6b46);
+  [-1, 1].forEach(s => { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.4, 6), wood); l.position.set(s * 0.9, 0.7, -0.05); l.castShadow = true; grp.add(l); });
+  const border = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.0, 0.1), wood); border.position.y = 2.1; border.castShadow = true; grp.add(border);
+  const pic = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.8), new THREE.MeshBasicMaterial({ map: placeholderTex, toneMapped: false })); pic.position.set(0, 2.1, 0.056); grp.add(pic);
+  scene.add(grp);
+  frames.push({ grp, pic, video: null, mediaId: null });
+});
+function fitPic(f, w, h) { const box = 2.4 / 1.8, r = w / h; if (r > box) f.pic.scale.set(1, box / r, 1); else f.pic.scale.set(r / box, 1, 1); }
+function refreshFrames() {
+  const list = curMedia().slice().sort(() => Math.random() - 0.5);
+  frames.forEach((f, i) => {
+    if (f.video) { f.video.pause(); f.video.removeAttribute("src"); f.video.load(); f.video = null; }
+    if (f.pic.material.map && f.pic.material.map !== placeholderTex) f.pic.material.map.dispose();
+    const m = list.length ? list[i % list.length] : null;
+    f.mediaId = m ? m.id : null;
+    if (!m) { f.pic.material.map = placeholderTex; f.pic.scale.set(1, 1, 1); f.pic.material.needsUpdate = true; return; }
+    if (m.type === "video") {
+      const v = document.createElement("video"); v.src = urlFor(m); v.muted = true; v.loop = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.crossOrigin = "anonymous";
+      v.addEventListener("loadedmetadata", () => fitPic(f, v.videoWidth || 4, v.videoHeight || 3));
+      v.play().catch(() => {});
+      const t = new THREE.VideoTexture(v); t.encoding = THREE.sRGBEncoding; f.video = v; f.pic.material.map = t;
+    } else {
+      const t = new THREE.TextureLoader().load(urlFor(m), (tx) => fitPic(f, tx.image.width, tx.image.height));
+      t.encoding = THREE.sRGBEncoding; f.pic.material.map = t;
+    }
+    f.pic.material.needsUpdate = true;
+  });
+}
+
+/* ---------------- 입력 ---------------- */
+const keys = {};
+window.addEventListener("keydown", (e) => { if (e.target.closest && e.target.closest("input,textarea,select")) return; keys[e.key.toLowerCase()] = true; });
+window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+let moveTarget = null, zoom = 1;
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let down = null;
+renderer.domElement.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!down) return; const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
+  if (moved > 10 || ceremony) return;
+  ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const picks = frames.map(f => f.pic).concat([...stones.values()].flatMap(g => g.children.filter(c => c.userData.stonePet)));
+  const hit = ray.intersectObjects(picks)[0];
+  if (hit) {
+    const f = frames.find(fr => fr.pic === hit.object);
+    if (f && f.mediaId) { showMedia(media.find(m => m.id === f.mediaId)); return; }
+    if (f && !f.mediaId) { openAlbum(); return; }
+    if (hit.object.userData.stonePet) { openGuest(hit.object.userData.stonePet); return; }
+  }
+  const g = ray.intersectObject(ground)[0];
+  if (g) moveTarget = g.point.clone().setY(0);
+});
+renderer.domElement.addEventListener("wheel", (e) => { zoom = Math.min(1.8, Math.max(0.55, zoom + e.deltaY * 0.001)); }, { passive: true });
+
+/* ---------------- 행동 ---------------- */
+function petPos() { return petObj ? petObj.group.position : player.position; }
+function happy(n) { if (!cur) return; cur.happiness = Math.max(0, Math.min(100, (cur.happiness || 60) + n)); store.put("pets", cur); updateHUD(); }
+$("#a-ball").onclick = () => {
+  if (!petObj || ballFlight || ballHeld || P.state === "fetch" || P.state === "return") return;
+  const dir = new THREE.Vector3(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y));
+  const start = player.position.clone().add(new THREE.Vector3(0, 1.3, 0)).addScaledVector(dir, 0.3);
+  const end = player.position.clone().addScaledVector(dir, rand(7, 11)); end.y = 0.14;
+  if (end.length() > 55) end.setLength(55);
+  ballFlight = { t: 0, dur: 0.95, start, end }; ball.visible = true; ball.position.copy(start);
+  P.state = "watch";
+};
+$("#a-treat").onclick = () => { if (!petObj) return; P.state = "follow"; P.jump = 1; spawnHearts(petPos(), 4); happy(4); toast(P.spirit ? `${cur.name}에게 좋아하던 간식을 놓아 주었어요` : `${cur.name}가 간식을 받고 폴짝 뛰어요`); };
+$("#a-pet").onclick = () => {
+  if (!petObj) return;
+  const d = petPos().distanceTo(player.position);
+  if (d > 2.2) { P.state = "come"; toast(`${cur.name}를 불렀어요`); return; }
+  P.wag = 3; spawnHearts(petPos(), 6); happy(3);
+};
+$("#a-sit").onclick = () => { if (!petObj) return; P.state = "sit"; P.sitT = 3.5; };
+
+/* ---------------- 오늘의 추억 ---------------- */
+let lastMemoryId = null;
+function mediaEl(m, controls = true) {
+  if (m.type === "video") { const v = document.createElement("video"); v.src = urlFor(m); v.controls = controls; v.playsInline = true; v.setAttribute("playsinline", ""); v.loop = true; return v; }
+  const i = document.createElement("img"); i.src = urlFor(m); i.alt = m.caption || "반려동물 사진"; return i;
+}
+function showRandomMemory() {
+  const list = curMedia();
+  const body = $("#mem-body"); body.innerHTML = "";
+  $("#mem-title").textContent = cur ? (cur.status === "star" ? `별이 된 ${cur.name}, 오늘의 추억` : `${cur.name}와의 오늘의 추억`) : "오늘의 추억";
+  if (!list.length) {
+    body.innerHTML = `<div class="empty">아직 올린 추억이 없어요.<br>사진이나 영상을 올리면 접속할 때마다 한 장씩 꺼내 보여 드려요.</div>`;
+    $("#mem-next").textContent = "추억 올리러 가기"; $("#mem-next").onclick = openAlbum;
+  } else {
+    let pool = list.filter(m => m.id !== lastMemoryId); if (!pool.length) pool = list;
+    const m = pool[Math.floor(Math.random() * pool.length)]; lastMemoryId = m.id;
+    const box = document.createElement("div"); box.className = "memory-media"; const el = mediaEl(m); box.appendChild(el); body.appendChild(box);
+    if (m.type === "video") el.play && el.play().catch(() => {});
+    const meta = document.createElement("div"); meta.className = "memory-meta";
+    const ago = daysBetween(m.date, new Date());
+    meta.innerHTML = `<b></b><span>${fmtDate(m.date)}${ago > 0 ? ` · ${ago}일 전` : " · 오늘"}</span>`;
+    meta.querySelector("b").textContent = m.caption || "이름 없는 추억";
+    body.appendChild(meta);
+    $("#mem-next").textContent = "다른 추억 보기"; $("#mem-next").onclick = showRandomMemory;
+  }
+  openModal("m-memory");
+}
+function showMedia(m) { if (!m) return; const b = $("#view-body"); b.innerHTML = ""; const box = document.createElement("div"); box.className = "memory-media"; box.appendChild(mediaEl(m)); b.appendChild(box); const meta = document.createElement("div"); meta.className = "memory-meta"; meta.innerHTML = `<b></b><span>${fmtDate(m.date)}</span>`; meta.querySelector("b").textContent = m.caption || ""; b.appendChild(meta); openModal("m-view"); }
+
+/* ---------------- 앨범 ---------------- */
+function openAlbum() { renderAlbum(); openModal("m-album"); }
+function renderAlbum() {
+  $("#alb-title").textContent = cur ? `${cur.name}의 추억 앨범` : "추억 앨범";
+  const grid = $("#alb-grid"); grid.innerHTML = "";
+  curMedia().sort((a, b) => b.created - a.created).forEach(m => {
+    const it = document.createElement("div"); it.className = "item";
+    const th = document.createElement("div"); th.className = "thumb";
+    const el = mediaEl(m, false); if (m.type === "video") { el.muted = true; el.preload = "metadata"; }
+    th.appendChild(el);
+    if (m.type === "video" || m.sample) { const b = document.createElement("span"); b.className = "badge"; b.textContent = m.sample ? "예시" : "영상"; th.appendChild(b); }
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "삭제"; del.setAttribute("aria-label", "이 추억 삭제");
+    del.onclick = async () => {
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "정말 삭제"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "삭제"; }, 2500); return; }
+      await store.del("media", m.id); media = media.filter(x => x.id !== m.id);
+      if (urls.has(m.id)) { URL.revokeObjectURL(urls.get(m.id)); urls.delete(m.id); }
+      renderAlbum(); refreshFrames(); toast("삭제했어요");
+    };
+    th.appendChild(del);
+    const cap = document.createElement("input"); cap.type = "text"; cap.id = "cap-" + m.id; cap.value = m.caption || ""; cap.placeholder = "한 줄 메모"; cap.maxLength = 40;
+    cap.onchange = () => { m.caption = cap.value.trim(); store.put("media", m); };
+    it.append(th, cap); grid.appendChild(it);
+  });
+  if (!grid.children.length) grid.innerHTML = `<div class="empty" style="grid-column:1/-1">아직 추억이 없어요. 위에서 사진이나 영상을 골라 주세요.</div>`;
+}
+$("#alb-file").addEventListener("change", async (e) => {
+  if (!cur) return;
+  const files = [...e.target.files]; e.target.value = "";
+  let ok = 0, fail = 0;
+  for (const f of files) {
+    const type = f.type.startsWith("video") ? "video" : f.type.startsWith("image") ? "image" : null;
+    if (!type) { fail++; continue; }
+    if (f.size > 300 * 1024 * 1024) { fail++; continue; }
+    const m = { id: uid(), petId: cur.id, type, blob: f, caption: f.name.replace(/\.[^.]+$/, "").slice(0, 40), date: f.lastModified || Date.now(), created: Date.now() };
+    await store.put("media", m);
+    media.push(m); ok++;
+  }
+  renderAlbum(); refreshFrames();
+  toast(ok ? `${ok}개의 추억을 담았어요${fail ? ` · ${fail}개는 지원하지 않는 형식이거나 300MB를 넘어요` : ""}` : "사진이나 영상 파일만 올릴 수 있어요");
+});
+
+/* ---------------- 반려동물 관리 ---------------- */
+function openPets() { renderPets(); openModal("m-pets"); }
+function renderPets() {
+  const list = $("#pet-list"); list.innerHTML = "";
+  pets.forEach(p => {
+    const b = document.createElement("button"); b.className = "petrow" + (cur && p.id === cur.id ? " cur" : "");
+    b.innerHTML = `<i class="dot"></i><span><strong></strong><br><small></small></span>`;
+    b.querySelector(".dot").style.background = p.color;
+    b.querySelector("strong").textContent = p.name + (p.sample ? " (예시)" : "");
+    b.querySelector("small").textContent = `${SPECIES[p.species]} · ${p.status === "star" ? `별이 된 날 ${fmtDate(p.passed)}` : "함께 지내는 중"}`;
+    b.onclick = () => { selectPet(p); closeModal(b); toast(`${p.name}와 공원에 왔어요`); };
+    list.appendChild(b);
+  });
+  const sample = pets.find(p => p.sample);
+  if (sample) {
+    const rm = document.createElement("button"); rm.className = "btn danger"; rm.textContent = "예시 ‘콩이’와 예시 사진 지우기";
+    rm.onclick = async () => {
+      if (rm.dataset.armed !== "1") { rm.dataset.armed = "1"; rm.textContent = "한 번 더 누르면 지워져요"; return; }
+      for (const m of media.filter(x => x.petId === sample.id)) await store.del("media", m.id);
+      media = media.filter(x => x.petId !== sample.id);
+      await store.del("pets", sample.id); pets = pets.filter(p => p.id !== sample.id);
+      if (cur && cur.id === sample.id) selectPet(pets[0] || null);
+      rebuildStones(); renderPets(); updateHUD();
+      if (!pets.length) toast("이제 내 반려동물을 등록해 주세요");
+    };
+    list.appendChild(rm);
+  }
+}
+$("#pet-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#pf-name").value.trim(); if (!name) return;
+  const p = { id: uid(), name, species: $("#pf-species").value, color: $("#pf-color").value, birth: $("#pf-birth").value || "", status: "alive", happiness: 70, created: Date.now(), flowers: 0 };
+  await store.put("pets", p); pets.push(p);
+  $("#pet-form").reset(); $("#pf-color").value = "#e0a96d";
+  selectPet(p); closeModal($("#pet-form")); toast(`${p.name}가 공원에 도착했어요. 추억 앨범에 사진을 올려 보세요`, 3600);
+});
+function selectPet(p) { cur = p; if (p) ls.set("pv-cur", p.id); spawnPet(); refreshFrames(); updateHUD(); }
+
+/* ---------------- HUD ---------------- */
+function updateHUD() {
+  const has = !!cur;
+  ["#petcard", "#menu", "#actions", "#hint"].forEach(s => $(s).hidden = !!ceremony);
+  $("#sample").hidden = !!ceremony || !(cur && cur.sample);
+  if (!has) { $("#pc-name").textContent = "반려동물을 등록해 주세요"; $("#pc-sub").textContent = "‘내 반려동물’에서 등록"; $("#pc-dot").style.background = "transparent"; $("#actions").hidden = true; return; }
+  $("#pc-dot").style.background = cur.color;
+  $("#pc-name").textContent = cur.name;
+  const star = cur.status === "star";
+  $("#petcard").classList.toggle("star", star);
+  let sub = SPECIES[cur.species];
+  if (star) sub += ` · 별이 된 지 ${Math.max(0, daysBetween(cur.passed, new Date()))}일`;
+  else if (cur.birth) sub += ` · 함께한 지 ${Math.max(0, daysBetween(cur.birth, new Date()))}일`;
+  $("#pc-sub").textContent = sub + ` · ${star ? "그리움" : "행복도"} ${Math.round(cur.happiness || 0)}`;
+  $("#pc-bar").style.width = (cur.happiness || 0) + "%";
+  $("#b-bridge").hidden = star;
+  $("#b-guest").hidden = !star;
+}
+$("#b-memory").onclick = showRandomMemory;
+$("#b-album").onclick = openAlbum;
+$("#b-pets").onclick = openPets;
+$("#sample-go").onclick = openPets;
+$("#b-garden").onclick = () => { moveTarget = new THREE.Vector3(0, 0, -28); toast("추모 정원으로 걸어가요"); };
+$("#b-guest").onclick = () => cur && openGuest(cur.id);
+
+/* ---------------- 방명록 ---------------- */
+let guestPet = null;
+function openGuest(petId) {
+  const p = pets.find(x => x.id === petId); if (!p) return; guestPet = p;
+  $("#gb-title").textContent = `${p.name} 추모 방명록`;
+  const now = new Date(), passed = pd(p.passed);
+  let next = new Date(now.getFullYear(), passed.getMonth(), passed.getDate());
+  if (next < new Date(now.getFullYear(), now.getMonth(), now.getDate())) next.setFullYear(now.getFullYear() + 1);
+  const dNext = daysBetween(now, next);
+  $("#gb-anniv").innerHTML = `<span>별이 된 지 <b>${Math.max(0, daysBetween(p.passed, now))}</b>일</span><span>다음 기일까지 <b>${dNext}</b>일</span><span>올린 꽃 <b>${p.flowers || 0}</b>송이</span>`;
+  renderGuest(); openModal("m-guest");
+}
+function renderGuest() {
+  const list = $("#gb-list"); list.innerHTML = "";
+  notes.filter(n => n.petId === guestPet.id).sort((a, b) => b.created - a.created).forEach(n => {
+    const d = document.createElement("div"); d.className = "msg"; d.textContent = n.text;
+    const s = document.createElement("small"); s.textContent = fmtDate(n.created) + (n.kind === "letter" ? " · 추모식 편지" : ""); d.appendChild(s); list.appendChild(d);
+  });
+}
+$("#gb-save").onclick = async () => {
+  const t = $("#gb-text").value.trim(); if (!t || !guestPet) return;
+  const n = { id: uid(), petId: guestPet.id, text: t, created: Date.now(), kind: "note" };
+  await store.put("notes", n); notes.push(n); $("#gb-text").value = ""; renderGuest(); toast("마음을 남겼어요");
+};
+$("#gb-flower").onclick = async () => {
+  if (!guestPet) return; guestPet.flowers = (guestPet.flowers || 0) + 1; await store.put("pets", guestPet);
+  const g = stones.get(guestPet.id); if (g) addFlowerTo(g);
+  openGuest(guestPet.id); toast(`${guestPet.name}에게 꽃 한 송이를 올렸어요`);
+};
+
+/* ---------------- 무지개다리 추모식 ---------------- */
+let ceremony = null, skyMix = 0, skyTarget = 0;
+$("#b-bridge").onclick = () => {
+  if (!cur) return;
+  $("#br-title").textContent = `${cur.name}의 무지개다리 추모식`;
+  $("#br-lead").textContent = `${cur.name}와 마지막 인사를 나누는 자리예요. 촛불을 켜고, 꽃을 올리고, 편지를 읽은 뒤 무지개다리 너머로 배웅해요. 천천히 준비해도 괜찮아요.`;
+  $("#br-date").value = todayISO(); $("#br-epitaph").value = ""; $("#br-letter").value = "";
+  $("#br-step1").hidden = false; $("#br-step2").hidden = true;
+  openModal("m-bridge");
+};
+$("#br-next").onclick = () => { $("#br-step1").hidden = true; $("#br-step2").hidden = false; };
+$("#br-back").onclick = () => { $("#br-step1").hidden = false; $("#br-step2").hidden = true; };
+$("#br-start").onclick = () => {
+  const draft = { passed: $("#br-date").value || todayISO(), epitaph: $("#br-epitaph").value.trim(), letter: $("#br-letter").value.trim() };
+  closeModal($("#br-start")); startCeremony(draft);
+};
+
+function startCeremony(draft) {
+  const p = cur; if (!p || !petObj) return;
+  const idx = pets.filter(x => x.status === "star").length;
+  const slot = stoneSlot(idx);
+  const preview = Object.assign({}, p, draft);
+  const stone = buildStone(preview, slot);
+  ceremony = { p, draft, stone, slot, step: 0, walk: null };
+  moveTarget = null; ballFlight = null; ballHeld = false; ball.visible = false;
+  player.position.copy(slot).add(new THREE.Vector3(-0.6, 0, 4)); player.rotation.y = Math.PI;
+  petObj.group.position.copy(slot).add(new THREE.Vector3(0.8, 0, 3.4)); petObj.group.rotation.y = Math.PI;
+  P.state = "ceremony";
+  skyTarget = 1; rainbowTarget = 0.95;
+  updateHUD(); $("#ceremony").hidden = false;
+  cerStep();
+}
+function cerStep() {
+  const c = ceremony, n = c.p.name;
+  const steps = [
+    { label: "1 / 4 · 촛불", text: `${n}를 기억하며 촛불을 밝혀요.`, btn: "촛불 켜기", run: () => { lightCandles(c.stone, true); spawnHearts(c.stone.position.clone().add(new THREE.Vector3(0, 0.6, 0.6)), 3); } },
+    { label: "2 / 4 · 헌화", text: `${n}가 좋아하던 꽃밭처럼, 꽃을 올려 주세요.`, btn: "꽃 올리기", run: () => { for (let i = 0; i < 5; i++) addFlowerTo(c.stone); } },
+    { label: "3 / 4 · 편지", text: c.draft.letter ? `${n}에게 쓴 편지를 읽어요.` : `편지를 쓰지 않았어요. 마음속으로 ${n}에게 하고 싶은 말을 전해 주세요.`, btn: c.draft.letter ? "편지 읽기" : "마음으로 전하기", run: () => { if (c.draft.letter) { $("#lt-title").textContent = `사랑하는 ${n}에게`; $("#letterView").textContent = c.draft.letter; openModal("m-letter"); } } },
+    { label: "4 / 4 · 배웅", text: `이제 ${n}가 무지개다리를 건널 시간이에요. 아프지 않은 곳에서 뛰놀 수 있도록 배웅해 주세요.`, btn: "무지개다리로 배웅하기", run: () => beginWalk() },
+  ];
+  const s = steps[c.step];
+  $("#cer-step").textContent = s.label; $("#cer-text").textContent = s.text;
+  const btns = $("#cer-btns"); btns.innerHTML = "";
+  if (c.step === 0) { const stop = document.createElement("button"); stop.className = "btn ghost"; stop.textContent = "추모식 그만두기"; stop.onclick = cancelCeremony; btns.appendChild(stop); }
+  const b = document.createElement("button"); b.className = "btn lilac"; b.textContent = s.btn;
+  b.onclick = () => { s.run(); if (c.step < steps.length - 1) { c.step++; cerStep(); } else { b.disabled = true; } };
+  btns.appendChild(b);
+}
+function cancelCeremony() {
+  if (!ceremony) return; scene.remove(ceremony.stone); ceremony = null; skyTarget = 0; $("#ceremony").hidden = true;
+  rebuildStones(); P.state = "follow"; updateHUD();
+}
+function beginWalk() {
+  const c = ceremony; spawnHearts(petObj.group.position, 8);
+  c.walk = { phase: "toFoot", t: 0, foot: new THREE.Vector3(RAINBOW_C.x - RB_MID, 0, RAINBOW_C.z + 0.3) };
+  $("#cer-text").textContent = `${c.p.name}가 뒤를 한 번 돌아보고, 천천히 무지개를 오르고 있어요.`;
+}
+async function finishCeremony() {
+  const c = ceremony; const p = c.p;
+  Object.assign(p, c.draft, { status: "star", passedAt: Date.now(), flowers: (p.flowers || 0) + c.stone.userData.flowers.length, happiness: 100 });
+  await store.put("pets", p);
+  if (c.draft.letter) { const n = { id: uid(), petId: p.id, text: c.draft.letter, created: Date.now(), kind: "letter" }; await store.put("notes", n); notes.push(n); }
+  scene.remove(c.stone);
+  $("#cer-step").textContent = "추모식을 마쳤어요";
+  $("#cer-text").textContent = `${p.name}는 정원 위의 별이 되었어요. 추모비 앞에서 언제든 다시 만나고, 공원에서는 빛나는 모습으로 함께 걸을 수 있어요.`;
+  const btns = $("#cer-btns"); btns.innerHTML = "";
+  const b = document.createElement("button"); b.className = "btn lilac"; b.textContent = "공원으로 돌아가기";
+  b.onclick = () => { ceremony = null; $("#ceremony").hidden = true; skyTarget = 0; rebuildStones(); spawnPet(); P.fade = 0; applySpirit(); updateHUD(); };
+  btns.appendChild(b);
+  rebuildStones();
+}
+
+/* ---------------- 예시 데이터 ---------------- */
+function sampleImage(bg1, bg2, label, sceneFn) {
+  return new Promise((res) => {
+    const c = document.createElement("canvas"); c.width = 800; c.height = 600; const g = c.getContext("2d");
+    const gr = g.createLinearGradient(0, 0, 0, 600); gr.addColorStop(0, bg1); gr.addColorStop(1, bg2); g.fillStyle = gr; g.fillRect(0, 0, 800, 600);
+    sceneFn(g);
+    // 강아지 얼굴
+    g.fillStyle = "#c8894d"; g.beginPath(); g.ellipse(400, 330, 150, 135, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#9a6538"; g.beginPath(); g.ellipse(268, 300, 50, 100, 0.35, 0, Math.PI * 2); g.fill(); g.beginPath(); g.ellipse(532, 300, 50, 100, -0.35, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#f3dcc0"; g.beginPath(); g.ellipse(400, 395, 72, 55, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#2b2230"; [[345, 305], [455, 305]].forEach(([x, y]) => { g.beginPath(); g.arc(x, y, 14, 0, Math.PI * 2); g.fill(); });
+    g.beginPath(); g.ellipse(400, 372, 22, 15, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "#2b2230"; g.lineWidth = 5; g.beginPath(); g.moveTo(400, 388); g.quadraticCurveTo(385, 420, 365, 412); g.moveTo(400, 388); g.quadraticCurveTo(415, 420, 435, 412); g.stroke();
+    g.fillStyle = "rgba(0,0,0,.45)"; g.fillRect(0, 528, 800, 72); g.fillStyle = "#fff"; g.font = "32px sans-serif"; g.textAlign = "center"; g.fillText(label, 400, 576);
+    c.toBlob((b) => res(b), "image/jpeg", 0.85);
+  });
+}
+async function seedSample() {
+  const p = { id: uid(), name: "콩이", species: "dog", color: "#c8894d", birth: "2016-04-12", status: "alive", happiness: 72, created: Date.now(), sample: true, flowers: 0 };
+  await store.put("pets", p); pets.push(p);
+  const items = [
+    ["#bfe4f0", "#9fd08a", "예시 사진 · 첫 산책", (g) => { g.fillStyle = "#fff"; g.beginPath(); g.arc(150, 110, 40, 0, 7); g.arc(190, 100, 50, 0, 7); g.fill(); }],
+    ["#ffd6a5", "#ffadad", "예시 사진 · 생일 파티", (g) => { ["#fff", "#ffe066", "#b9a6ff"].forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.arc(120 + i * 270, 90 + (i % 2) * 40, 26, 0, 7); g.fill(); }); }],
+    ["#2b2754", "#6c5ce7", "예시 사진 · 겨울밤 담요 속", (g) => { g.fillStyle = "#fff6e8"; for (let i = 0; i < 40; i++) { g.fillRect(Math.random() * 800, Math.random() * 300, 3, 3); } }],
+  ];
+  const day = 86400000;
+  for (let i = 0; i < items.length; i++) {
+    const [a, b, label, fn] = items[i]; const blob = await sampleImage(a, b, label, fn);
+    if (!blob) continue;
+    const m = { id: uid(), petId: p.id, type: "image", blob, caption: label.replace("예시 사진 · ", ""), date: Date.now() - (i + 1) * 211 * day, created: Date.now() - i, sample: true };
+    await store.put("media", m); media.push(m);
+  }
+}
+
+/* ---------------- 루프 ---------------- */
+const tmp = new THREE.Vector3(), camGoal = new THREE.Vector3(), camLook = new THREE.Vector3(0, 1, 0);
+function stepToward(obj, goal, speed, dt, stopAt = 0.05) {
+  tmp.subVectors(goal, obj.position); tmp.y = 0; const d = tmp.length();
+  if (d > stopAt) { const s = Math.min(d - stopAt, speed * dt); obj.position.addScaledVector(tmp.normalize(), s); turnTo(obj, Math.atan2(tmp.x, tmp.z), dt); return { d, moving: true }; }
+  return { d, moving: false };
+}
+function turnTo(obj, yaw, dt) { let diff = yaw - obj.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff)); obj.rotation.y += diff * Math.min(1, dt * 10); }
+let walkPhase = 0, petWalk = 0;
+
+function update(dt, t) {
+  // 플레이어
+  let moving = false;
+  if (!ceremony) {
+    const mv = new THREE.Vector3((keys.d || keys.arrowright ? 1 : 0) - (keys.a || keys.arrowleft ? 1 : 0), 0, (keys.s || keys.arrowdown ? 1 : 0) - (keys.w || keys.arrowup ? 1 : 0));
+    if (mv.lengthSq()) { moveTarget = null; mv.normalize(); player.position.addScaledVector(mv, 5 * dt); turnTo(player, Math.atan2(mv.x, mv.z), dt); moving = true; }
+    else if (moveTarget) { const r = stepToward(player, moveTarget, 5, dt); moving = r.moving; if (!r.moving) moveTarget = null; }
+    if (player.position.length() > 56) player.position.setLength(56);
+  }
+  walkPhase += dt * (moving ? 10 : 0);
+  player.userData.legs.forEach((l, i) => l.rotation.x = moving ? Math.sin(walkPhase + i * Math.PI) * 0.6 : l.rotation.x * 0.8);
+
+  // 정원 분위기
+  const inGarden = player.position.z < -24;
+  const target = ceremony ? skyTarget : (inGarden ? 0.65 : 0);
+  skyMix += (target - skyMix) * Math.min(1, dt * 0.8);
+  scene.background.copy(DAY).lerp(DUSK, skyMix); scene.fog.color.copy(scene.background);
+  hemi.intensity = 0.9 - skyMix * 0.45; sun.intensity = 0.95 - skyMix * 0.7;
+  const rbGoal = ceremony ? rainbowTarget : (inGarden ? Math.max(rainbowTarget, 0.6) : rainbowTarget);
+  rainbow.children.forEach(m => m.material.opacity += (rbGoal - m.material.opacity) * Math.min(1, dt * 1.5));
+  starSprites.forEach(s => { const k = 0.85 + Math.sin(t * 2 + s.userData.phase) * 0.15; s.scale.setScalar(2.4 * k); s.material.opacity = 0.35 + skyMix * 0.65; });
+
+  // 공
+  if (ballFlight) {
+    ballFlight.t += dt; const u = Math.min(1, ballFlight.t / ballFlight.dur);
+    ball.position.lerpVectors(ballFlight.start, ballFlight.end, u); ball.position.y = THREE.MathUtils.lerp(ballFlight.start.y, ballFlight.end.y, u) + Math.sin(u * Math.PI) * 3;
+    if (u >= 1) { ballFlight = null; P.state = "fetch"; }
+  }
+
+  // 반려동물
+  if (petObj) {
+    const g = petObj.group; let pm = false, speed = 0;
+    const behind = player.position.clone().add(new THREE.Vector3(Math.sin(player.rotation.y + 2.4) * 1.3, 0, Math.cos(player.rotation.y + 2.4) * 1.3));
+    if (P.state === "follow" || P.state === "come") {
+      const d = g.position.distanceTo(player.position);
+      if (d > 1.8 || P.state === "come") { speed = Math.min(7, 2 + d * 1.2); const r = stepToward(g, P.state === "come" ? player.position : behind, speed, dt, P.state === "come" ? 1.1 : 0.2); pm = r.moving; if (P.state === "come" && !r.moving) { P.state = "follow"; P.wag = 3; spawnHearts(g.position, 4); happy(2); } }
+      else { P.idleLook += dt; tmp.subVectors(player.position, g.position); turnTo(g, Math.atan2(tmp.x, tmp.z), dt * 0.4); }
+    } else if (P.state === "watch") {
+      tmp.subVectors(ball.position, g.position); turnTo(g, Math.atan2(tmp.x, tmp.z), dt);
+    } else if (P.state === "fetch") {
+      const r = stepToward(g, ball.position, 7.5, dt, 0.35); pm = r.moving; speed = 7.5;
+      if (!r.moving) { ballHeld = true; P.state = "return"; }
+    } else if (P.state === "return") {
+      const r = stepToward(g, player.position, 6, dt, 1.2); pm = r.moving; speed = 6;
+      if (!r.moving) { ballHeld = false; ball.visible = false; P.state = "follow"; P.wag = 3; spawnHearts(g.position, 6); happy(6); toast(`${cur.name}가 공을 물어 왔어요!`, 1800); }
+    } else if (P.state === "sit") {
+      P.sitT -= dt; tmp.subVectors(player.position, g.position); turnTo(g, Math.atan2(tmp.x, tmp.z), dt);
+      if (P.sitT <= 0) { P.state = "follow"; spawnHearts(g.position, 3); happy(2); }
+    } else if (P.state === "ceremony" && ceremony && ceremony.walk) {
+      const w = ceremony.walk;
+      if (w.phase === "toFoot") { const r = stepToward(g, w.foot, 1.6, dt, 0.05); pm = r.moving; speed = 1.6; if (!r.moving) { w.phase = "arc"; w.t = 0; } }
+      else if (w.phase === "arc") {
+        w.t += dt / 7; const u = Math.min(1, w.t); const th = Math.PI - u * Math.PI / 2;
+        const nx = RAINBOW_C.x + Math.cos(th) * RB_MID, ny = Math.sin(th) * RB_MID + 0.2;
+        g.position.set(nx, ny, RAINBOW_C.z + 0.3); g.rotation.y = Math.PI / 2;
+        pm = true; speed = 1.4;
+        P.fade = u > 0.75 ? 1 - (u - 0.75) / 0.25 : 1; applySpirit();
+        if (u >= 1) { w.phase = "star"; w.t = 0; g.visible = false; const i = pets.filter(x => x.status === "star").length; w.star = addStar(ceremony.p.id, new THREE.Vector3(RAINBOW_C.x, RB_MID + 0.5, RAINBOW_C.z)); w.from = w.star.position.clone(); w.to = starPosFor(i); }
+      } else if (w.phase === "star") {
+        w.t += dt / 3; const u = Math.min(1, w.t); w.star.position.lerpVectors(w.from, w.to, u * u * (3 - 2 * u));
+        if (u >= 1) { w.phase = "done"; finishCeremony(); }
+      }
+    }
+    if (!(P.state === "ceremony" && ceremony && ceremony.walk && ceremony.walk.phase !== "toFoot")) {
+      // 땅 위 높이 (영혼 상태는 둥실)
+      const baseY = P.spirit ? 0.35 + Math.sin(t * 2) * 0.12 : 0;
+      P.jump = Math.max(0, P.jump - dt * 1.6);
+      g.position.y = baseY + Math.sin((1 - P.jump) * Math.PI) * (P.jump > 0 ? 0.7 : 0);
+    }
+    if (P.state !== "ceremony" && P.fade < 1) { P.fade = Math.min(1, P.fade + dt * 0.6); applySpirit(); }
+    petWalk += dt * (pm ? 4 + speed * 2 : 0);
+    petObj.legs.forEach((l, i) => l.rotation.x = pm ? Math.sin(petWalk + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.7 : l.rotation.x * 0.85);
+    P.wag = Math.max(1, P.wag - dt * 0.8);
+    petObj.tail.rotation.z = Math.sin(t * (6 + P.wag * 4)) * 0.25 * P.wag;
+    const sit = P.state === "sit";
+    petObj.inner.rotation.x += ((sit ? -0.45 : 0) - petObj.inner.rotation.x) * Math.min(1, dt * 8);
+    petObj.inner.position.y += ((sit ? 0.12 : 0) - petObj.inner.position.y) * Math.min(1, dt * 8);
+    petObj.headG.rotation.y = Math.sin(t * 0.7) * 0.15;
+    if (ballHeld) { const bp = new THREE.Vector3(0, petObj.headG.position.y - 0.08, petObj.headZ + 0.05); petObj.inner.localToWorld(bp); ball.position.copy(bp); }
+    if (cur && cur.status !== "star") { cur.happiness = Math.max(0, (cur.happiness || 60) - dt * 0.05); }
+  }
+
+  // 하트
+  for (let i = hearts.length - 1; i >= 0; i--) {
+    const h = hearts[i]; const d = h.userData; if (d.delay > 0) { d.delay -= dt; h.visible = false; continue; } h.visible = true;
+    d.life += dt; h.position.y += d.vy * dt; h.material.opacity = Math.max(0, 1 - d.life / 1.4);
+    if (d.life > 1.4) { scene.remove(h); h.material.dispose(); hearts.splice(i, 1); }
+  }
+
+  // 카메라
+  let focus = player.position, off = new THREE.Vector3(0, 8.5, 11).multiplyScalar(zoom);
+  if (ceremony) {
+    if (ceremony.walk && ceremony.walk.phase !== "toFoot") { focus = new THREE.Vector3(RAINBOW_C.x, 4, RAINBOW_C.z); off = new THREE.Vector3(0, 3, 20); }
+    else { focus = ceremony.slot.clone().add(new THREE.Vector3(0, 0.6, 1.5)); off = new THREE.Vector3(2.5, 3.6, 7.5); }
+  }
+  camGoal.copy(focus).add(off);
+  camera.position.lerp(camGoal, Math.min(1, dt * 3));
+  camLook.lerp(tmp.copy(focus).add(new THREE.Vector3(0, 1, 0)), Math.min(1, dt * 4));
+  camera.lookAt(camLook);
+  sun.position.set(player.position.x + 18, 30, player.position.z + 12); sun.target.position.copy(player.position);
+}
+
+let last = performance.now(), hudT = 0;
+function loop(now) {
+  const dt = Math.min(0.05, ((now || performance.now()) - last) / 1000); last = now || performance.now();
+  update(dt, last / 1000);
+  hudT += dt; if (hudT > 2) { hudT = 0; if (cur && !ceremony) updateHUD(); }
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+window.addEventListener("beforeunload", () => { if (cur) store.put("pets", cur); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && cur) store.put("pets", cur); });
+
+/* ---------------- 시작 ---------------- */
+(async function boot() {
+  try {
+    pets = await store.all("pets");
+    if (!pets.length) await seedSample();
+    media = await store.all("media");
+    notes = await store.all("notes");
+    const savedId = ls.get("pv-cur");
+    cur = pets.find(p => p.id === savedId) || pets.find(p => !p.sample) || pets[0] || null;
+    spawnPet(); refreshFrames(); rebuildStones(); updateHUD();
+    camera.position.copy(player.position).add(new THREE.Vector3(0, 8.5, 11)); camLook.copy(player.position);
+  } catch (e) { console.error(e); }
+  $("#loading").hidden = true;
+  requestAnimationFrame(loop);
+  showRandomMemory();
+})();
+})();
+</script>
